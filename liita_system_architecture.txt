@@ -1,0 +1,705 @@
+# Liita — System Architecture & Master Agent Instructions
+**Version:** 1.1 | **Classification:** Internal Engineering Reference  
+**Platform Scope:** Android + iOS only (macOS and Windows explicitly out of scope for MVP)  
+**Purpose:** Feed this document into a fresh AI agent session to ensure consistent, regression-safe code generation.
+
+---
+
+## AGENT OPERATING INSTRUCTIONS
+
+> You are a Principal Mobile Systems Architect specializing in Flutter and native BLE mesh networking. All code you write must strictly conform to the data models, contracts, and layered architecture defined in this document. Do not invent new packet fields, database schemas, or encryption approaches. If a requirement is ambiguous, ask for clarification before writing code.
+
+---
+
+## Part 1: Core Definitions
+
+### 1.1 Application Identity
+
+- **App Name:** Liita
+- **Bundle ID (iOS):** `com.liita.app`
+- **Application ID (Android):** `com.liita.app`
+- **BLE Service UUID:** `6E400001-B5A3-F393-E0A9-E50E24DCCA9E` *(custom Liita mesh service)*
+- **BLE Profile Characteristic UUID (MESH_PROFILE_CHAR):** `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
+
+### 1.2 Platform Targets
+
+| Platform | Min Version | Primary BLE API |
+|---|---|---|
+| Android | API 26 (Oreo) | `android.bluetooth.le` SDK |
+| iOS | iOS 15.0 | CoreBluetooth framework |
+
+> **Out of Scope:** macOS and Windows are explicitly excluded from this MVP. macOS can be added post-launch with minimal effort (reuses iOS CoreBluetooth code). Windows BLE peripheral advertising is unreliable across hardware and has no solid Flutter plugin — defer indefinitely.
+
+---
+
+## Part 2: Data Models (Single Source of Truth)
+
+All models are defined in Dart. Native platform code communicates via JSON serialization of these structures.
+
+### 2.1 `UserProfile`
+
+```dart
+class UserProfile {
+  final String deviceId;     // UUID v4, generated once, stored in secure storage
+  final String name;         // Max 20 characters
+  final int age;             // 18–99
+  final String seatNumber;   // e.g. "14C", max 4 chars
+  final String occupation;   // Max 30 characters
+  final String? photoHash;   // SHA-256 hash of profile photo bytes (nullable)
+  final int version;         // Monotonic counter, increment on any profile change
+  final String publicKey;    // Base64-encoded ECDH public key (P-256 curve)
+  
+  // Derived for BLE Scan Response packing (must fit in 31 bytes)
+  // Format: name (20B) | age (1B) | seat (4B) | version (1B) = 26 bytes max
+}
+```
+
+**Constraints:**
+- `deviceId` is the canonical identifier across all packets and database records.
+- `version` starts at 1 and increments by 1 on each profile update. Never reset.
+- `publicKey` is advertised in-band. The private key never leaves the device.
+
+### 2.2 `MeshPacket`
+
+```dart
+class MeshPacket {
+  final String packetId;       // UUID v4 — used for deduplication
+  final String originId;       // deviceId of the originating user
+  final String destinationId;  // deviceId of the target user, or '*' for broadcast
+  final int ttl;               // Time-to-live; starts at 8, decremented on each relay
+  final String payloadType;    // See PayloadType enum below
+  final String data;           // Base64-encoded payload (may be encrypted)
+  final int timestamp;         // Unix timestamp in milliseconds (UTC)
+}
+
+enum PayloadType {
+  wave,          // 'w' — wave intent signal
+  waveAccept,    // 'a' — accepting a wave (creates match)
+  text,          // 't' — encrypted chat message (AES-GCM)
+  profileSync,   // 'p' — UserProfile JSON (unencrypted, signed)
+  photoChunk,    // 'c' — photo chunk (see PhotoChunkPayload)
+  broadcast,     // 'b' — flight public room message (unencrypted)
+  ack,           // 'k' — delivery acknowledgement
+}
+```
+
+**Relay Rules (implement exactly as specified):**
+1. If `packet.packetId` is in the local dedup cache → **drop silently. Do not relay.**
+2. If `packet.originId == localDeviceId` → **drop silently. Never relay your own originating packets.**
+3. If `packet.destinationId == localDeviceId` → **consume. Do not relay.**
+4. If `packet.destinationId == '*'` (broadcast) → **consume AND relay** (if `ttl > 1`).
+5. If `packet.ttl <= 1` → **consume (if destination matches). Do not relay.**
+6. Otherwise: **decrement ttl, add to dedup cache, re-broadcast via peripheral.**
+
+### 2.3 `MatchEvent` (Append-Only Log)
+
+```dart
+class MatchEvent {
+  final String eventId;      // UUID v4
+  final String eventType;    // 'WAVE_SENT' | 'WAVE_RECEIVED' | 'MATCH_CREATED' | 'BLOCKED'
+  final String actorId;      // deviceId of who performed the action
+  final String targetId;     // deviceId of who the action targets
+  final int timestamp;       // Unix timestamp in milliseconds (UTC)
+}
+```
+
+**Match Derivation Logic:** A match exists between `deviceA` and `deviceB` if and only if:
+- A `WAVE_SENT` event exists with `actorId = deviceA, targetId = deviceB`
+- AND a `WAVE_SENT` event exists with `actorId = deviceB, targetId = deviceA`
+- AND no `BLOCKED` event exists for either direction
+
+### 2.4 `ChatMessage`
+
+```dart
+class ChatMessage {
+  final String messageId;    // UUID v4
+  final String matchId;      // Composite key: sorted(deviceA, deviceB) joined by ':'
+  final String fromId;       // deviceId of sender
+  final String toId;         // deviceId of recipient
+  final String ciphertext;   // Base64-encoded AES-GCM encrypted content
+  final String nonce;        // Base64-encoded 12-byte AES-GCM nonce
+  final int timestamp;       // Unix timestamp in milliseconds (UTC)
+  final bool delivered;      // Set to true on receipt of 'k' ACK packet
+  final bool isRead;         // Set to true when chat screen is opened
+}
+```
+
+### 2.5 `PhotoChunkPayload`
+
+```dart
+class PhotoChunkPayload {
+  final String photoHash;    // SHA-256 of the complete photo (session identifier)
+  final int chunkIndex;      // 0-based chunk index
+  final int totalChunks;     // Total number of chunks in this photo
+  final String data;         // Base64-encoded chunk bytes (max 400 bytes per chunk)
+}
+```
+
+**Photo Transmission Rules:**
+- Photos are chunked into 400-byte segments before Base64 encoding.
+- Receiver buffers chunks by `(photoHash, chunkIndex)`.
+- When `received_chunks.length == totalChunks`, reassemble, verify SHA-256 hash, write to disk.
+- Incomplete transmissions are abandoned after 5 minutes with no new chunks received.
+
+---
+
+## Part 3: Database Schema (SQLite via `sqflite`)
+
+### Schema Version: 1
+
+```sql
+-- User profile cache (profiles of all discovered peers)
+CREATE TABLE profiles (
+  device_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  age INTEGER NOT NULL,
+  seat_number TEXT NOT NULL,
+  occupation TEXT NOT NULL,
+  photo_hash TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  public_key TEXT NOT NULL,
+  last_seen INTEGER NOT NULL  -- unix timestamp ms
+);
+
+-- Append-only match event log
+CREATE TABLE match_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  timestamp INTEGER NOT NULL
+);
+CREATE INDEX idx_match_events_actors ON match_events(actor_id, target_id);
+
+-- Encrypted chat messages
+CREATE TABLE messages (
+  message_id TEXT PRIMARY KEY,
+  match_id TEXT NOT NULL,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  ciphertext TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  delivered INTEGER NOT NULL DEFAULT 0,  -- boolean
+  is_read INTEGER NOT NULL DEFAULT 0     -- boolean
+);
+CREATE INDEX idx_messages_match ON messages(match_id, timestamp);
+
+-- Photo chunk buffer
+CREATE TABLE photo_chunks (
+  photo_hash TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  total_chunks INTEGER NOT NULL,
+  data TEXT NOT NULL,        -- base64 chunk
+  received_at INTEGER NOT NULL,
+  PRIMARY KEY (photo_hash, chunk_index)
+);
+
+-- Packet deduplication cache (in-memory preferred, SQLite as backup)
+CREATE TABLE packet_dedup (
+  packet_id TEXT PRIMARY KEY,
+  received_at INTEGER NOT NULL  -- unix timestamp ms; prune entries older than 10 minutes
+);
+```
+
+**Migration Policy:** All schema changes must be handled via `sqflite`'s `onUpgrade` callback. Never drop tables in migrations. Add columns with `ALTER TABLE ... ADD COLUMN` and provide default values.
+
+---
+
+## Part 4: Service Layer Architecture
+
+### 4.1 Service Dependency Tree
+
+```
+UI Layer (Flutter Widgets)
+    │
+    ▼
+AppController (ChangeNotifier / Riverpod)
+    │
+    ├── MeshService (Abstract Dart Interface)
+    │       │
+    │       ├── AndroidMeshService (via MethodChannel → Kotlin Foreground Service)
+    │       └── IOSMeshService (via MethodChannel → Swift CBManager)
+    │
+    ├── CryptoService (Pure Dart — pointycastle)
+    │
+    ├── DatabaseService (Pure Dart — sqflite)
+    │
+    └── NotificationService (Pure Dart — flutter_local_notifications)
+```
+
+### 4.2 `MeshService` Abstract Interface
+
+```dart
+abstract class MeshService {
+  // Control
+  Future<void> startMesh(UserProfile localProfile);
+  Future<void> stopMesh();
+  
+  // Streams — all consumed by AppController
+  Stream<UserProfile> get discoveredPeers;   // emits on each new/updated profile seen
+  Stream<MeshPacket> get incomingPackets;    // emits pre-relay packets for local consumption
+  
+  // Outbound
+  Future<void> sendPacket(MeshPacket packet);
+  
+  // State
+  bool get isRunning;
+  Stream<int> get activePeerCount;
+}
+```
+
+**Critical Constraint:** `MeshService` implementations must never call `sendPacket` internally for relay — relay logic happens inside the native layer. Dart-side `sendPacket` is only for *originating* new packets.
+
+### 4.3 `CryptoService` Interface
+
+```dart
+abstract class CryptoService {
+  // Key Management
+  Future<AsymmetricKeyPair> generateKeyPair();       // ECDH P-256
+  Future<String> exportPublicKey(PublicKey key);     // Base64 DER
+  Future<PublicKey> importPublicKey(String base64);
+  
+  // ECDH
+  Future<Uint8List> deriveSharedSecret(
+    PrivateKey myPrivateKey,
+    PublicKey theirPublicKey,
+  );
+  
+  // AES-GCM (key is 32-byte derived secret)
+  Future<EncryptedPayload> encrypt(String plaintext, Uint8List key);
+  Future<String> decrypt(EncryptedPayload payload, Uint8List key);
+}
+
+class EncryptedPayload {
+  final String ciphertext; // Base64
+  final String nonce;      // Base64, 12 bytes
+}
+```
+
+**Implementation Notes:**
+- Use `pointycastle` package for all crypto primitives in Dart.
+- Shared secrets are derived using ECDH and then hashed with HKDF-SHA256 to produce the final 32-byte AES key.
+- Store derived shared secrets in the platform keychain (iOS `Keychain`, Android `EncryptedSharedPreferences`) keyed by `matchId`.
+- The private key is generated once at install and stored in the platform keychain. It is never exported or transmitted.
+
+---
+
+## Part 5: BLE Network Layer — Native Implementation Spec
+
+### 5.1 Android — Foreground Service Architecture
+
+**File:** `android/app/src/main/kotlin/com/liita/app/MeshForegroundService.kt`
+
+```
+MeshForegroundService (extends Service)
+├── startAdvertising()
+│     └── BluetoothLeAdvertiser.startAdvertising()
+│           ├── AdvertiseSettings: ADVERTISE_MODE_LOW_LATENCY, TX_POWER_HIGH
+│           ├── AdvertiseData (31 bytes): ServiceUUID + deviceId (8 chars)
+│           └── ScanResponseData (31 bytes): name (20B) + age (1B) + seat (4B) + version (1B)
+│
+├── startScanning()
+│     └── BluetoothLeScanner.startScan(filters, settings, callback)
+│           ├── ScanFilter: ServiceUUID = Liita BLE Service UUID
+│           └── ScanSettings: SCAN_MODE_LOW_LATENCY (override to BALANCED during duty cycle)
+│
+├── onScanResult(result)
+│     ├── Parse ScanRecord for ServiceUUID match
+│     ├── Parse AdvertiseData → deviceId
+│     ├── Parse ScanResponseData → name, age, seat, version
+│     ├── If profile.version > stored.version → update DatabaseService
+│     └── Emit to Flutter via EventChannel("liita/peers")
+│
+├── onCharacteristicReadRequest() [GATT Server — legacy, keep for backward compat]
+│     └── Return full UserProfile JSON for MESH_PROFILE_CHAR reads
+│
+└── relayPacket(packet: MeshPacket)
+      ├── Check dedup cache → drop if known
+      ├── Check ttl > 1 → drop if expired
+      ├── Decrement ttl
+      ├── Add to dedup cache
+      └── Re-broadcast via AdvertiseData (22-byte packet payload)
+```
+
+**Manifest Requirements:**
+```xml
+<service android:name=".MeshForegroundService"
+         android:foregroundServiceType="connectedDevice"
+         android:exported="false" />
+
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+                 android:usesPermissionFlags="neverForLocation" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+```
+
+**Duty Cycle Schedule:**
+```
+Active Chat Mode:    Scan SCAN_MODE_LOW_LATENCY continuously
+Idle Mode:          Scan 5s ON (LOW_LATENCY) / 10s OFF, repeat
+Background Mode:    Scan 3s ON (BALANCED) / 20s OFF, repeat
+```
+
+### 5.2 iOS — CoreBluetooth Background Architecture
+
+**File:** `ios/Runner/MeshManager.swift`
+
+```
+MeshManager (NSObject, CBCentralManagerDelegate, CBPeripheralManagerDelegate)
+├── CBPeripheralManager (Advertising — works in background with reduced interval)
+│     ├── Advertise: ServiceUUID + deviceId in CBAdvertisementDataLocalNameKey
+│     └── Background: iOS reduces interval automatically; this is expected behavior
+│
+├── CBCentralManager (Scanning)
+│     ├── options: [CBCentralManagerOptionRestoreIdentifierKey: "liita-central"]
+│     ├── Background scan: only wakes for ServiceUUID matches (register in Info.plist)
+│     └── willRestoreState: restore scan and reconnect to known peers
+│
+├── didDiscover(peripheral, advertisementData, rssi)
+│     ├── Parse CBAdvertisementDataServiceUUIDsKey → verify Liita UUID
+│     ├── Parse CBAdvertisementDataLocalNameKey → extract deviceId
+│     ├── Queue GATT read for full profile (iOS does not support Scan Response for apps)
+│     └── Connect → read MESH_PROFILE_CHAR → disconnect
+│
+└── Info.plist Required Keys:
+      NSBluetoothAlwaysUsageDescription
+      NSBluetoothPeripheralUsageDescription  
+      UIBackgroundModes: ["bluetooth-central", "bluetooth-peripheral"]
+      CBCentralManagerOptionRestoreIdentifierKey: "liita-central"
+```
+
+**iOS Background Note:** iOS does not expose Scan Response Data to app code. The GATT read approach is *required* on iOS. To fix the Android scan+connect crash, implement the sequential pattern on Android only:
+
+```kotlin
+// Android only — stop scan before connecting
+scanner.stopScan(scanCallback)
+gattDevice.connectGatt(context, false, gattCallback)
+// In onConnectionStateChange(CONNECTED):
+gatt.discoverServices()
+// In onServicesDiscovered:
+gatt.readCharacteristic(meshProfileChar)
+// In onCharacteristicRead:
+gatt.disconnect()
+scanner.startScan(filters, settings, scanCallback) // resume scanning
+```
+
+### 5.3 Packet Broadcast Over BLE
+
+Because BLE advertisement payloads are limited to 31 bytes, `MeshPacket` objects are not transmitted in advertisement packets. The relay protocol uses a **GATT Write** to the `MESH_PROFILE_CHAR` of the central's GATT server.
+
+**Relay Flow:**
+```
+Device A (originator) → Device B (relay) → Device C (destination)
+
+Step 1: A encodes MeshPacket as JSON → compresses with gzip → Base64
+Step 2: A writes compressed packet to Device B's GATT characteristic (via Write Without Response)
+Step 3: B receives write → decompresses → validates packetId dedup → decrements ttl
+Step 4: B writes to all connected peripherals with ttl > 1
+Step 5: C receives, destinationId matches → consume, emit to Flutter layer, send ACK
+```
+
+**Size Budget for MeshPacket (compressed):**
+- Text message: ~180 bytes compressed. Fits in a single GATT write (512 byte MTU on modern devices).
+- Wave/Accept: ~80 bytes. Trivially small.
+- Profile sync: ~300 bytes compressed.
+- Photo chunks: Each chunk is 400 bytes. Send as multiple writes with `chunkIndex` tracking.
+
+---
+
+## Part 6: Flutter Application Layer
+
+### 6.1 State Management
+
+Use **Riverpod** (preferred) or `Provider`. Do not use `setState` for any data that crosses widget boundaries.
+
+**Core Providers:**
+
+```dart
+// Discovered peers (live-updating from MeshService stream)
+final peersProvider = StreamProvider<List<UserProfile>>((ref) {
+  return ref.watch(meshServiceProvider).discoveredPeers.scan(
+    <UserProfile>[],
+    (peers, newPeer) => [...peers.where((p) => p.deviceId != newPeer.deviceId), newPeer],
+  );
+});
+
+// Matches (derived from MatchEvent log)
+final matchesProvider = FutureProvider<List<UserProfile>>((ref) async {
+  return ref.watch(databaseServiceProvider).getMatches(localDeviceId);
+});
+
+// Messages for a given match
+final messagesProvider = StreamProvider.family<List<ChatMessage>, String>((ref, matchId) {
+  return ref.watch(databaseServiceProvider).watchMessages(matchId);
+});
+```
+
+### 6.2 Screen → Service Flow
+
+```
+HomeScreen
+├── Reads: peersProvider (RadarPainter + profile cards)
+├── Action: Wave → AppController.sendWave(targetId)
+│     ├── Create MeshPacket(payloadType: wave, destinationId: targetId)
+│     ├── DatabaseService.insertMatchEvent(WAVE_SENT)
+│     └── MeshService.sendPacket(packet)
+│
+MatchesScreen
+├── Reads: matchesProvider
+└── Navigates to ChatScreen(matchId)
+
+ChatScreen(matchId)
+├── Reads: messagesProvider(matchId)
+├── On send: AppController.sendMessage(matchId, plaintext)
+│     ├── CryptoService.encrypt(plaintext, sharedKey)
+│     ├── DatabaseService.insertMessage(ChatMessage)
+│     └── MeshService.sendPacket(MeshPacket(payloadType: text, ...))
+└── On ACK received: DatabaseService.markDelivered(messageId)
+```
+
+### 6.3 Incoming Packet Handler
+
+This is the central routing logic, implemented in `AppController`:
+
+```dart
+void _handleIncomingPacket(MeshPacket packet) {
+  switch (packet.payloadType) {
+    case PayloadType.wave:
+      _handleWave(packet);
+    case PayloadType.waveAccept:
+      _handleWaveAccept(packet);
+    case PayloadType.text:
+      _handleText(packet);
+    case PayloadType.profileSync:
+      _handleProfileSync(packet);
+    case PayloadType.photoChunk:
+      _handlePhotoChunk(packet);
+    case PayloadType.broadcast:
+      _handleBroadcast(packet);
+    case PayloadType.ack:
+      _handleAck(packet);
+  }
+}
+
+void _handleWave(MeshPacket packet) async {
+  await _db.insertMatchEvent(MatchEvent(
+    eventType: 'WAVE_RECEIVED',
+    actorId: packet.originId,
+    targetId: localDeviceId,
+    timestamp: DateTime.now().millisecondsSinceEpoch,
+  ));
+  await _notifications.showWaveNotification(senderName: _getPeerName(packet.originId));
+  
+  // Check if we previously waved at this person → auto-create match
+  final weWavedFirst = await _db.hasWaveSent(localDeviceId, packet.originId);
+  if (weWavedFirst) {
+    await _createMatch(packet.originId);
+  }
+}
+
+Future<void> _createMatch(String peerId) async {
+  await _db.insertMatchEvent(MatchEvent(eventType: 'MATCH_CREATED', ...));
+  // Exchange public keys if not already stored
+  await _initiateKeyExchange(peerId);
+}
+```
+
+---
+
+## Part 7: Security Specification
+
+### 7.1 Threat Model
+
+| Threat | Mitigation |
+|---|---|
+| Passive eavesdropping of BLE broadcasts | AES-GCM encryption on all 't' packets |
+| Replay attacks | Unique `packetId` (UUID v4) + dedup cache |
+| Profile spoofing | Profiles are signed with sender's private key |
+| Relay node reading message content | End-to-end encryption; relay nodes see only ciphertext |
+| Packet flooding / DoS | TTL decrement; max 8 hops; dedup cache rejects duplicates |
+| Key impersonation | Public keys are bound to `deviceId`; trust-on-first-use model |
+
+### 7.2 Key Exchange Protocol
+
+```
+1. Alice sends Wave to Bob (packet contains Alice's publicKey in data field)
+2. Bob receives Wave, extracts Alice's publicKey, stores in profiles table
+3. Bob sends WaveAccept to Alice (packet contains Bob's publicKey in data field)
+4. Alice receives WaveAccept, extracts Bob's publicKey
+5. Both derive: sharedSecret = ECDH(myPrivateKey, theirPublicKey)
+6. Both derive: aesKey = HKDF-SHA256(sharedSecret, salt="liita-v1", length=32)
+7. aesKey is stored in platform keychain keyed by matchId
+8. All subsequent 't' packets encrypted with this aesKey
+```
+
+### 7.3 Block List Implementation
+
+When Device A blocks Device B:
+1. Insert `BLOCKED` event into `match_events`.
+2. Add `deviceB.deviceId` to local block list (stored in `EncryptedSharedPreferences` / iOS Keychain).
+3. `MeshService` native layer checks block list before relaying any packet. Blocked device packets are **dropped at the hardware callback level**, not Dart level.
+
+---
+
+## Part 8: Test Cases & Validation
+
+### 8.1 Unit Tests (Pure Dart — no device required)
+
+```dart
+// TEST GROUP: MeshPacket Relay Logic
+group('Relay rules', () {
+  test('Drops packet if packetId is in dedup cache', () { ... });
+  test('Drops packet if originId == localDeviceId', () { ... });
+  test('Consumes and does not relay if destinationId == localDeviceId', () { ... });
+  test('Decrements ttl before relaying', () { ... });
+  test('Drops packet if ttl == 1', () { ... });
+  test('Broadcasts AND relays if destinationId == "*"', () { ... });
+});
+
+// TEST GROUP: Match Derivation
+group('Match derivation', () {
+  test('No match if only one wave sent', () { ... });
+  test('Match created when both sides have WAVE_SENT events', () { ... });
+  test('No match if BLOCKED event exists for either party', () { ... });
+});
+
+// TEST GROUP: Crypto
+group('CryptoService', () {
+  test('ECDH derive produces same secret on both sides', () { ... });
+  test('AES-GCM encrypt/decrypt roundtrip', () { ... });
+  test('AES-GCM decrypt fails with wrong key', () { ... });
+  test('AES-GCM decrypt fails with modified ciphertext', () { ... });
+});
+
+// TEST GROUP: Photo Chunking
+group('Photo chunking', () {
+  test('100-byte photo produces correct chunk count', () { ... });
+  test('Reassembled photo matches original SHA-256 hash', () { ... });
+  test('Missing chunk prevents reassembly', () { ... });
+});
+```
+
+### 8.2 Integration Tests (2+ Physical Devices Required)
+
+```
+TEST: Discovery Latency
+  - Device A starts advertising
+  - Device B starts scanning
+  - Measure time from A.startAdvertising() to B.onPeerDiscovered(A)
+  - Pass criteria: < 5 seconds in open air, < 15 seconds in metal enclosure
+
+TEST: Wave → Match Flow
+  - Device A waves at Device B
+  - Verify: Device B receives local notification "Someone waved at you!"
+  - Device B waves back at Device A
+  - Verify: Both devices show match in MatchesScreen
+  - Pass criteria: Complete flow < 10 seconds end-to-end
+
+TEST: Chat Encryption
+  - Devices A and B are matched
+  - A sends "hello world" to B
+  - Verify: Raw BLE packet captured contains only ciphertext (no plaintext)
+  - Verify: B decrypts and displays "hello world"
+
+TEST: Mesh Relay (3 Devices)
+  - Device A and Device C are out of BLE range of each other
+  - Device B is in range of both A and C
+  - A sends wave packet to C
+  - Verify: C receives wave, with packet.ttl < original ttl (relay occurred)
+
+TEST: Packet Deduplication Storm Prevention
+  - 3 devices in range of each other (triangle topology)
+  - A sends one text packet to B
+  - Verify: B receives exactly 1 copy of the message
+  - Verify: No packet is relayed more than once per device
+```
+
+### 8.3 Stress Tests
+
+```
+TEST: High-Density Peer Discovery
+  - Simulate 20 BLE advertisers using test devices + BLE emulators
+  - Measure: scan callback frequency, missed devices, memory usage
+  - Pass criteria: No ANR on Android, no crash, < 200MB memory usage
+
+TEST: 14-Hour Battery Simulation
+  - Enable flight mode + BLE only
+  - Run MeshService in duty-cycle idle mode for 1 hour
+  - Extrapolate battery drain
+  - Pass criteria: < 10% battery drain per hour in idle mode
+
+TEST: Reconnection After Bluetooth Toggle
+  - Start MeshService
+  - Toggle device Bluetooth OFF → ON
+  - Verify: MeshService automatically restarts advertising and scanning
+  - Pass criteria: Full recovery within 10 seconds of BT re-enable
+```
+
+---
+
+## Part 9: Regression Contract
+
+> **Every AI agent session working on `MeshService`, `CryptoService`, or `DatabaseService` must acknowledge and preserve these contracts before writing any code.**
+
+1. **Dedup First:** Any incoming BLE packet is checked against the dedup cache *before* any other processing. Period.
+2. **Never Relay Own Origin:** A device never relays a packet where `originId == localDeviceId`.
+3. **Encrypt Before Transmit:** A `'t'` (text) type MeshPacket's `data` field is *always* AES-GCM encrypted before being handed to `MeshService.sendPacket()`.
+4. **Database on Background Isolate:** All `DatabaseService` operations use `compute()` or a dedicated Dart isolate. Zero database I/O on the main UI thread.
+5. **Stream, Don't Poll:** UI layers read peer/match/message state via Streams/Providers. No `Timer`-based polling of the database.
+6. **Private Key Never Leaves Keychain:** The ECDH private key is generated in and read from the platform keychain only. It is never serialized to JSON, logged, or placed in a MeshPacket.
+7. **TTL Is Authoritative:** Relay decisions are made by the native layer. The Dart layer does not implement relay logic.
+8. **Schema Migrations Are Additive:** Database schema changes only add tables or columns. No destructive migrations.
+
+---
+
+## Appendix A: BLE Payload Byte Budget
+
+### Advertisement Packet (31 bytes max)
+```
+[Flags: 3 bytes] [ServiceUUID: 18 bytes] [DeviceId: 8 bytes] [Reserved: 2 bytes]
+```
+
+### Scan Response Packet (31 bytes max — Android only)
+```
+[Name: 20 bytes] [Age: 1 byte] [Seat: 4 bytes] [ProfileVersion: 1 byte] [Reserved: 5 bytes]
+```
+
+### GATT Write MTU (varies by device)
+```
+Minimum guaranteed:  23 bytes (subtract 3 for ATT header = 20 bytes usable)
+Modern devices:     512 bytes (use GATT MTU negotiation: requestMtu(512))
+Recommended:        Fragment any payload > 400 bytes
+```
+
+---
+
+## Appendix B: Key Dependencies
+
+```yaml
+# pubspec.yaml — approved dependencies
+dependencies:
+  flutter_blue_plus: ^1.31.0    # BLE Central scanning
+  ble_peripheral: ^0.4.0        # BLE Peripheral advertising
+  sqflite: ^2.3.0               # SQLite
+  flutter_local_notifications: ^17.0.0  # Push notifications
+  pointycastle: ^3.9.0          # Crypto primitives (ECDH, AES-GCM, HKDF)
+  flutter_secure_storage: ^9.0.0  # Platform keychain access
+  riverpod: ^2.5.0              # State management
+  uuid: ^4.4.0                  # UUID v4 generation
+
+dev_dependencies:
+  mockito: ^5.4.4               # Mocking for unit tests
+  build_runner: ^2.4.0          # Code generation for mockito
+  flutter_test:
+    sdk: flutter
+```
+
+---
+
+*Document Version 1.1 — Scoped to Android + iOS. macOS and Windows excluded from MVP.*
+*Feed this document into each new AI agent session. Do not modify without updating the version number.*

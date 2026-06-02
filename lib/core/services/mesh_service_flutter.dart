@@ -1,0 +1,165 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+import 'package:liita/core/models/mesh_packet.dart';
+import 'package:liita/core/models/user_profile.dart';
+import 'package:liita/core/services/mesh_service.dart';
+
+/// Real [MeshService] implementation that bridges to native BLE mesh code
+/// via Flutter platform channels.
+///
+/// Uses a [MethodChannel] for request/response calls (start, stop, send) and
+/// two [EventChannel]s for continuous streams (peer discovery, incoming
+/// packets). The native side is expected to handle the actual BLE advertising,
+/// scanning, GATT server/client, and mesh routing.
+class FlutterMeshService implements MeshService {
+  FlutterMeshService();
+
+  // ---------------------------------------------------------------------------
+  // Platform channels
+  // ---------------------------------------------------------------------------
+
+  static const _methodChannel = MethodChannel('com.liita.app/mesh');
+  static const _peersEventChannel = EventChannel('com.liita.app/peers');
+  static const _packetsEventChannel = EventChannel('com.liita.app/packets');
+
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
+
+  bool _isRunning = false;
+
+  final _discoveredDeviceIds = <String>{};
+
+  final _peerCountController = StreamController<int>.broadcast();
+
+  StreamSubscription<UserProfile>? _peerCountSubscription;
+
+  // Lazily initialised broadcast streams from event channels.
+  Stream<UserProfile>? _peersStream;
+  Stream<MeshPacket>? _packetsStream;
+
+  // ---------------------------------------------------------------------------
+  // MeshService interface
+  // ---------------------------------------------------------------------------
+
+  @override
+  bool get isRunning => _isRunning;
+
+  @override
+  Stream<UserProfile> get discoveredPeers {
+    _peersStream ??= _peersEventChannel
+        .receiveBroadcastStream()
+        .map<UserProfile>((dynamic event) {
+      final json = _decodeEvent(event);
+      return UserProfile.fromJson(json);
+    }).asBroadcastStream();
+    return _peersStream!;
+  }
+
+  @override
+  Stream<MeshPacket> get incomingPackets {
+    _packetsStream ??= _packetsEventChannel
+        .receiveBroadcastStream()
+        .map<MeshPacket>((dynamic event) {
+      final json = _decodeEvent(event);
+      return MeshPacket.fromJson(json);
+    }).asBroadcastStream();
+    return _packetsStream!;
+  }
+
+  @override
+  Stream<int> get activePeerCount => _peerCountController.stream;
+
+  @override
+  Future<void> startMesh(UserProfile localProfile) async {
+    if (_isRunning) return;
+
+    await _methodChannel.invokeMethod<void>(
+      'startMesh',
+      {'profileJson': jsonEncode(localProfile.toJson())},
+    );
+
+    _isRunning = true;
+    _discoveredDeviceIds.clear();
+
+    // Track unique device IDs and emit updated peer counts.
+    _peerCountSubscription = discoveredPeers.listen((profile) {
+      if (_discoveredDeviceIds.add(profile.deviceId)) {
+        _peerCountController.add(_discoveredDeviceIds.length);
+      }
+    });
+  }
+
+  @override
+  Future<void> stopMesh() async {
+    if (!_isRunning) return;
+
+    await _methodChannel.invokeMethod<void>('stopMesh');
+    _isRunning = false;
+
+    await _peerCountSubscription?.cancel();
+    _peerCountSubscription = null;
+    _discoveredDeviceIds.clear();
+    _peerCountController.add(0);
+  }
+
+  @override
+  Future<void> sendPacket(MeshPacket packet) async {
+    if (!_isRunning) return;
+
+    await _methodChannel.invokeMethod<void>(
+      'sendPacket',
+      {'packetJson': jsonEncode(packet.toJson())},
+    );
+  }
+
+  @override
+  Future<void> setForegroundMode() async {
+    if (!_isRunning) return;
+    await _methodChannel.invokeMethod<void>('setForegroundMode');
+  }
+
+  @override
+  Future<void> setBackgroundMode() async {
+    if (!_isRunning) return;
+    await _methodChannel.invokeMethod<void>('setBackgroundMode');
+  }
+
+  @override
+  Future<void> setContinuousMode() async {
+    if (!_isRunning) return;
+    await _methodChannel.invokeMethod<void>('setContinuousMode');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cleanup
+  // ---------------------------------------------------------------------------
+
+  /// Call when the service is permanently disposed.
+  void dispose() {
+    stopMesh();
+    _peerCountController.close();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  /// Decodes a platform channel event into a JSON map.
+  ///
+  /// The native side may send either a [Map] (automatically decoded by
+  /// Flutter's standard method codec) or a JSON [String].
+  static Map<String, dynamic> _decodeEvent(dynamic event) {
+    if (event is Map) {
+      return Map<String, dynamic>.from(event);
+    }
+    if (event is String) {
+      return jsonDecode(event) as Map<String, dynamic>;
+    }
+    throw FormatException(
+      'Unexpected event type from platform channel: ${event.runtimeType}',
+    );
+  }
+}
