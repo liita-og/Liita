@@ -1,18 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/models/mesh_packet.dart';
 import 'package:liita/core/models/user_profile.dart';
 import 'package:liita/core/providers/providers.dart';
 import 'package:liita/core/widgets/avatar_widget.dart';
+import 'package:uuid/uuid.dart';
 
-/// Passenger discovery screen — scrollable 2-column grid of nearby travelers.
-///
-/// Each card shows the peer's avatar, name, seat badge, occupation, and a
-/// preview of their icebreaker answer. Tapping a card opens a detail overlay
-/// with a Wave button. The overlay can be dismissed via the X button in the
-/// top-right corner or by tapping the scrim behind it.
+/// Passenger discovery — stacked card deck (Figma design).
 class RadarScreen extends ConsumerStatefulWidget {
   const RadarScreen({super.key});
 
@@ -20,708 +15,494 @@ class RadarScreen extends ConsumerStatefulWidget {
   ConsumerState<RadarScreen> createState() => _RadarScreenState();
 }
 
-class _RadarScreenState extends ConsumerState<RadarScreen>
-    with SingleTickerProviderStateMixin {
-  UserProfile? _selectedPeer;
+class _RadarScreenState extends ConsumerState<RadarScreen> {
+  int _frontIndex = 0;
 
-  // Subtle entrance animation for the overlay card
-  late AnimationController _overlayAnim;
-  late Animation<double> _overlayScale;
-  late Animation<double> _overlayOpacity;
-
-  @override
-  void initState() {
-    super.initState();
-    _overlayAnim = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 260),
-    );
-    _overlayScale = Tween<double>(begin: 0.92, end: 1.0).animate(
-      CurvedAnimation(parent: _overlayAnim, curve: Curves.easeOutCubic),
-    );
-    _overlayOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _overlayAnim, curve: Curves.easeOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _overlayAnim.dispose();
-    super.dispose();
-  }
-
-  void _openPeer(UserProfile peer) {
-    setState(() => _selectedPeer = peer);
-    _overlayAnim.forward(from: 0);
-  }
-
-  Future<void> _closePeer() async {
-    await _overlayAnim.reverse();
-    if (mounted) setState(() => _selectedPeer = null);
-  }
-
-  void _onWave(UserProfile peer) {
-    final localProfile = ref.read(localProfileProvider);
-    if (localProfile == null) return;
-
-    ref.read(wavedAtProvider.notifier).update((s) => {...s, peer.deviceId});
-
-    ref.read(meshServiceProvider).sendPacket(
-      MeshPacket(
-        packetId: const Uuid().v4(),
-        originId: localProfile.deviceId,
-        destinationId: peer.deviceId,
-        payloadType: PayloadType.wave,
-        timestamp: DateTime.now().millisecondsSinceEpoch,
-      ),
-    );
-
-    _closePeer();
+  void _nextCard(int total) {
+    if (total == 0) return;
+    setState(() => _frontIndex = (_frontIndex + 1) % total);
   }
 
   @override
   Widget build(BuildContext context) {
     final peersAsync = ref.watch(peersProvider);
-    final peerCount = ref.watch(activePeerCountProvider);
-    final wavedAt = ref.watch(wavedAtProvider);
+    final localProfile = ref.watch(localProfileProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Nearby Passengers'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: AppSpacing.md),
-            child: _ScanStatusChip(peerCount: peerCount),
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          // Main content
-          peersAsync.when(
-            loading: () => const _ShimmerGrid(),
-            error: (_, __) => const _EmptyState(
-              icon: Icons.wifi_off_rounded,
-              message: 'Could not connect to mesh',
-            ),
-            data: (peers) {
-              if (peers.isEmpty) {
-                return const _EmptyState(
-                  icon: Icons.people_outline_rounded,
-                  message: 'Scanning for nearby travelers...',
-                  showSpinner: true,
-                );
-              }
-              return _PassengerGrid(
-                peers: peers,
-                wavedAt: wavedAt,
-                onTap: _openPeer,
-              );
-            },
-          ),
-
-          // Peer detail overlay
-          if (_selectedPeer != null)
-            _PeerDetailOverlay(
-              peer: _selectedPeer!,
-              hasWaved: wavedAt.contains(_selectedPeer!.deviceId),
-              scaleAnim: _overlayScale,
-              opacityAnim: _overlayOpacity,
-              onWave: () => _onWave(_selectedPeer!),
-              onClose: _closePeer,
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// Scan status chip
-// =============================================================================
-
-class _ScanStatusChip extends StatelessWidget {
-  final AsyncValue<int> peerCount;
-
-  const _ScanStatusChip({required this.peerCount});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: AppColors.success.withValues(alpha: 0.10),
-        borderRadius: AppRadius.pillAll,
-        border: Border.all(
-          color: AppColors.success.withValues(alpha: 0.20),
-          width: 1,
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        bottom: false,
+        child: peersAsync.when(
+          data: (peers) => _buildContent(peers, localProfile),
+          loading: () => _buildContent([], localProfile),
+          error: (_, __) => _buildContent([], localProfile),
         ),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.success,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            peerCount.when(
-              data: (c) => '$c nearby',
-              loading: () => 'Scanning...',
-              error: (_, __) => 'Offline',
-            ),
-            style: const TextStyle(
-              fontSize: 12,
-              color: AppColors.success,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// Passenger grid
-// =============================================================================
-
-class _PassengerGrid extends StatelessWidget {
-  final List<UserProfile> peers;
-  final Set<String> wavedAt;
-  final ValueChanged<UserProfile> onTap;
-
-  const _PassengerGrid({
-    required this.peers,
-    required this.wavedAt,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: AppSpacing.sm,
-        mainAxisSpacing: AppSpacing.sm,
-        childAspectRatio: 0.78,
-      ),
-      itemCount: peers.length,
-      itemBuilder: (context, index) {
-        final peer = peers[index];
-        return _PassengerCard(
-          peer: peer,
-          hasWaved: wavedAt.contains(peer.deviceId),
-          onTap: () => onTap(peer),
-        );
-      },
-    );
-  }
-}
-
-// =============================================================================
-// Passenger card
-// =============================================================================
-
-class _PassengerCard extends StatefulWidget {
-  final UserProfile peer;
-  final bool hasWaved;
-  final VoidCallback onTap;
-
-  const _PassengerCard({
-    required this.peer,
-    required this.hasWaved,
-    required this.onTap,
-  });
-
-  @override
-  State<_PassengerCard> createState() => _PassengerCardState();
-}
-
-class _PassengerCardState extends State<_PassengerCard>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _pressAnim;
-  late Animation<double> _scaleAnim;
-
-  @override
-  void initState() {
-    super.initState();
-    _pressAnim = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 120),
-      reverseDuration: const Duration(milliseconds: 200),
-    );
-    _scaleAnim = Tween<double>(begin: 1.0, end: 0.96).animate(
-      CurvedAnimation(parent: _pressAnim, curve: Curves.easeOut),
     );
   }
 
-  @override
-  void dispose() {
-    _pressAnim.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final peer = widget.peer;
-
-    return GestureDetector(
-      onTapDown: (_) => _pressAnim.forward(),
-      onTapUp: (_) {
-        _pressAnim.reverse();
-        widget.onTap();
-      },
-      onTapCancel: () => _pressAnim.reverse(),
-      child: ScaleTransition(
-        scale: _scaleAnim,
-        child: Container(
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: AppRadius.lgAll,
-            border: Border.all(
-              color: widget.hasWaved
-                  ? AppColors.wave.withValues(alpha: 0.35)
-                  : AppColors.glassBorder,
-              width: widget.hasWaved ? 1.5 : 1.0,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+  Widget _buildContent(List<UserProfile> peers, UserProfile? localProfile) {
+    return Column(
+      children: [
+        // ── Header ──────────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Radar',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: -0.5,
+                ),
               ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Avatar + wave badge
-                Center(
-                  child: AvatarWidget(
-                    name: peer.name,
-                    size: 56,
-                    showWaveBadge: widget.hasWaved,
-                  ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: AppColors.glassBorder, width: 1),
                 ),
-                const SizedBox(height: AppSpacing.sm),
-
-                // Name
-                Center(
-                  child: Text(
-                    peer.name,
-                    style: const TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                const SizedBox(height: 4),
-
-                // Seat badge
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.12),
-                      borderRadius: AppRadius.pillAll,
-                    ),
-                    child: Text(
-                      'Seat ${peer.seatNumber}',
-                      style: const TextStyle(
-                        color: AppColors.primary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.3,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: peers.isEmpty
+                            ? AppColors.textTertiary
+                            : AppColors.textPrimary,
+                        shape: BoxShape.circle,
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-
-                // Occupation
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.work_outline_rounded,
-                      size: 11,
-                      color: AppColors.textTertiary,
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        peer.occupation,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 11,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    const SizedBox(width: 6),
+                    Text(
+                      '${peers.length} nearby',
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+              ),
+            ],
+          ),
+        ),
 
-                // Icebreaker snippet
-                if (peer.icebreakerAnswer.isNotEmpty)
-                  Expanded(
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: AppColors.surfaceLight,
-                        borderRadius: AppRadius.smAll,
-                      ),
-                      child: Text(
-                        '"${peer.icebreakerAnswer}"',
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 10,
-                          fontStyle: FontStyle.italic,
-                          height: 1.4,
-                        ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+        // ── Card Stack ───────────────────────────────────────────────────────
+        Expanded(
+          child: peers.isEmpty
+              ? const _EmptyState()
+              : _CardStack(
+                  peers: peers,
+                  frontIndex: _frontIndex,
+                  localProfile: localProfile,
+                  onWave: (peer) => _sendWave(peer, localProfile),
+                  onNext: () => _nextCard(peers.length),
+                ),
+        ),
+
+        // ── Pagination dots ──────────────────────────────────────────────────
+        if (peers.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                peers.length.clamp(0, 6),
+                (i) {
+                  final isActive =
+                      i == _frontIndex % peers.length.clamp(1, 6);
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: isActive ? 16 : 4,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: isActive
+                          ? AppColors.textPrimary
+                          : AppColors.surfaceLight,
+                      borderRadius: BorderRadius.circular(999),
                     ),
-                  ),
-              ],
+                  );
+                },
+              ),
             ),
           ),
+
+        // Space for floating tab bar
+        const SizedBox(height: 84),
+      ],
+    );
+  }
+
+  Future<void> _sendWave(UserProfile peer, UserProfile? local) async {
+    if (local == null) return;
+    final mesh = ref.read(meshServiceProvider);
+    final packet = MeshPacket(
+      packetId: const Uuid().v4(),
+      originId: local.deviceId,
+      destinationId: peer.deviceId,
+      ttl: 5,
+      payloadType: PayloadType.wave,
+      data: '${local.name}|${local.seatNumber}',
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+    );
+    await mesh.sendPacket(packet);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Wave sent to ${peer.name}'),
+          backgroundColor: AppColors.surfaceLight,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: AppRadius.lgAll),
+        ),
+      );
+    }
+  }
+}
+
+// ── Card Stack ───────────────────────────────────────────────────────────────
+
+class _CardStack extends StatelessWidget {
+  final List<UserProfile> peers;
+  final int frontIndex;
+  final UserProfile? localProfile;
+  final void Function(UserProfile) onWave;
+  final VoidCallback onNext;
+
+  const _CardStack({
+    required this.peers,
+    required this.frontIndex,
+    required this.localProfile,
+    required this.onWave,
+    required this.onNext,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final count = peers.length.clamp(0, 4);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Stack(
+        alignment: Alignment.topCenter,
+        children: [
+          // Draw from back (highest stackPos) to front (stackPos == 0)
+          for (int stackPos = count - 1; stackPos >= 0; stackPos--)
+            _StackCard(
+              peer: peers[(frontIndex + stackPos) % peers.length],
+              isFront: stackPos == 0,
+              scale: 1.0 - (stackPos * 0.04),
+              translateY: stackPos * 28.0,
+              opacity: 1.0 - (stackPos * 0.15),
+              onWave: () => onWave(peers[frontIndex % peers.length]),
+              onNext: onNext,
+              stackDepth: stackPos,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StackCard extends StatelessWidget {
+  final UserProfile peer;
+  final bool isFront;
+  final double scale;
+  final double translateY;
+  final double opacity;
+  final VoidCallback onWave;
+  final VoidCallback onNext;
+  final int stackDepth;
+
+  const _StackCard({
+    required this.peer,
+    required this.isFront,
+    required this.scale,
+    required this.translateY,
+    required this.opacity,
+    required this.onWave,
+    required this.onNext,
+    required this.stackDepth,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+      transform: Matrix4.identity()
+        ..translate(0.0, translateY)
+        ..scale(scale),
+      transformAlignment: Alignment.topCenter,
+      child: Opacity(
+        opacity: opacity,
+        child: Container(
+          width: double.infinity,
+          height: 380,
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.glassBorder, width: 1),
+            boxShadow: isFront ? AppShadows.elevated : [],
+          ),
+          child: isFront
+              ? _FrontCardContent(
+                  peer: peer, onWave: onWave, onNext: onNext)
+              : _BackCardContent(stackDepth: stackDepth),
         ),
       ),
     );
   }
 }
 
-// =============================================================================
-// Empty / loading states
-// =============================================================================
+class _FrontCardContent extends StatelessWidget {
+  final UserProfile peer;
+  final VoidCallback onWave;
+  final VoidCallback onNext;
+
+  const _FrontCardContent({
+    required this.peer,
+    required this.onWave,
+    required this.onNext,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Avatar + info ──
+          Row(
+            children: [
+              AvatarWidget(profile: peer, size: 56),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            peer.name,
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: -0.3,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 6),
+                          child: Text('·',
+                              style: TextStyle(
+                                  color: AppColors.textTertiary,
+                                  fontSize: 13)),
+                        ),
+                        Text(
+                          peer.seatNumber,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      peer.occupation,
+                      style: const TextStyle(
+                        color: AppColors.textTertiary,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const Spacer(),
+
+          // ── Icebreaker ──
+          Text(
+            '"${peer.icebreakerAnswer}"',
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.w300,
+              height: 1.5,
+            ),
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+          ),
+
+          const Spacer(),
+
+          // ── Buttons ──
+          Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: onNext,
+                  child: Container(
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceLight,
+                      borderRadius: BorderRadius.circular(12),
+                      border:
+                          Border.all(color: AppColors.glassBorder, width: 1),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Text(
+                      'Skip',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: GestureDetector(
+                  onTap: onWave,
+                  child: Container(
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Text(
+                      'Wave',
+                      style: TextStyle(
+                        color: AppColors.textOnPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BackCardContent extends StatelessWidget {
+  final int stackDepth;
+
+  const _BackCardContent({required this.stackDepth});
+
+  @override
+  Widget build(BuildContext context) {
+    if (stackDepth == 1) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Opacity(
+          opacity: 0.4,
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceLight,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 100,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceLight,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: 70,
+                    height: 11,
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceLight,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+}
 
 class _EmptyState extends StatelessWidget {
-  final IconData icon;
-  final String message;
-  final bool showSpinner;
-
-  const _EmptyState({
-    required this.icon,
-    required this.message,
-    this.showSpinner = false,
-  });
+  const _EmptyState();
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          if (showSpinner)
-            const SizedBox(
-              width: 32,
-              height: 32,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: AppColors.primary,
-              ),
-            )
-          else
-            Icon(icon, size: 48, color: AppColors.textTertiary),
-          const SizedBox(height: AppSpacing.md),
-          Text(
-            message,
-            style: const TextStyle(
-              color: AppColors.textTertiary,
-              fontSize: 14,
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              shape: BoxShape.circle,
+              border: Border.all(color: AppColors.glassBorder, width: 1),
             ),
-            textAlign: TextAlign.center,
+            child: const Icon(
+              Icons.wifi_tethering_rounded,
+              color: AppColors.textTertiary,
+              size: 28,
+            ),
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            'Scanning for passengers',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w500,
+              letterSpacing: -0.3,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Keep the app open while we search',
+            style: TextStyle(color: AppColors.textTertiary, fontSize: 14),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ShimmerGrid extends StatefulWidget {
-  const _ShimmerGrid();
-
-  @override
-  State<_ShimmerGrid> createState() => _ShimmerGridState();
-}
-
-class _ShimmerGridState extends State<_ShimmerGrid>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _shimmer;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat(reverse: true);
-    _shimmer = Tween<double>(begin: 0.3, end: 0.7).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _shimmer,
-      builder: (context, _) {
-        return GridView.builder(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: AppSpacing.sm,
-            mainAxisSpacing: AppSpacing.sm,
-            childAspectRatio: 0.78,
-          ),
-          itemCount: 6,
-          itemBuilder: (_, __) => _ShimmerCard(opacity: _shimmer.value),
-        );
-      },
-    );
-  }
-}
-
-class _ShimmerCard extends StatelessWidget {
-  final double opacity;
-  const _ShimmerCard({required this.opacity});
-
-  @override
-  Widget build(BuildContext context) {
-    return Opacity(
-      opacity: opacity,
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: AppRadius.lgAll,
-          border: Border.all(color: AppColors.glassBorder, width: 1),
-        ),
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// Peer detail overlay — Issue 3 fix: X button + tap-outside dismissal
-// =============================================================================
-
-class _PeerDetailOverlay extends StatelessWidget {
-  final UserProfile peer;
-  final bool hasWaved;
-  final Animation<double> scaleAnim;
-  final Animation<double> opacityAnim;
-  final VoidCallback onWave;
-  final VoidCallback onClose;
-
-  const _PeerDetailOverlay({
-    required this.peer,
-    required this.hasWaved,
-    required this.scaleAnim,
-    required this.opacityAnim,
-    required this.onWave,
-    required this.onClose,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: opacityAnim,
-      child: GestureDetector(
-        // Tap the dark scrim to dismiss
-        onTap: onClose,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          color: Colors.black.withValues(alpha: 0.55),
-          alignment: Alignment.bottomCenter,
-          child: GestureDetector(
-            // Absorb taps inside the card so they don't hit the scrim
-            onTap: () {},
-            child: ScaleTransition(
-              scale: scaleAnim,
-              alignment: Alignment.bottomCenter,
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.xxl,
-                  AppSpacing.md,
-                  AppSpacing.md,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: AppRadius.xlAll,
-                  border: Border.all(
-                    color: AppColors.glassBorder,
-                    width: 1,
-                  ),
-                  boxShadow: AppShadows.elevated,
-                ),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(AppSpacing.lg),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Handle + X button row
-                      Row(
-                        children: [
-                          const Spacer(),
-                          Container(
-                            width: 36,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: AppColors.divider,
-                              borderRadius: AppRadius.pillAll,
-                            ),
-                          ),
-                          const Spacer(),
-                          // X close button (Issue 3 fix)
-                          GestureDetector(
-                            onTap: onClose,
-                            child: Container(
-                              width: 28,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                color: AppColors.surfaceLight,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: AppColors.glassBorder,
-                                  width: 1,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.close_rounded,
-                                size: 16,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-
-                      // Avatar
-                      AvatarWidget(name: peer.name, size: 72),
-                      const SizedBox(height: AppSpacing.sm),
-
-                      // Name
-                      Text(
-                        peer.name,
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                      const SizedBox(height: AppSpacing.xs),
-
-                      // Meta
-                      Text(
-                        'Seat ${peer.seatNumber}  |  ${peer.occupation}  |  Age ${peer.age}',
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 13,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-
-                      // Icebreaker block
-                      if (peer.icebreakerPrompt.isNotEmpty) ...[
-                        const SizedBox(height: AppSpacing.md),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(AppSpacing.md),
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceLight,
-                            borderRadius: AppRadius.mdAll,
-                            border: Border.all(
-                              color: AppColors.glassBorder,
-                              width: 1,
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                peer.icebreakerPrompt,
-                                style: TextStyle(
-                                  color: AppColors.primary.withValues(alpha: 0.85),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                peer.icebreakerAnswer,
-                                style: const TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: AppSpacing.md),
-
-                      // Wave button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: ElevatedButton.icon(
-                          onPressed: hasWaved ? null : onWave,
-                          icon: Icon(
-                            hasWaved
-                                ? Icons.check_rounded
-                                : Icons.waving_hand_rounded,
-                            size: 20,
-                          ),
-                          label: Text(
-                            hasWaved ? 'Waved' : 'Wave',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                hasWaved ? AppColors.surfaceLight : AppColors.wave,
-                            foregroundColor: Colors.white,
-                            disabledBackgroundColor: AppColors.surfaceLight,
-                            disabledForegroundColor: AppColors.textSecondary,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: AppRadius.mdAll,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }

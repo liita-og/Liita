@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:liita/core/theme/app_theme.dart';
+import 'package:liita/core/models/user_profile.dart';
 
-/// Reusable avatar widget — shows colored initials or a profile photo
+/// Reusable avatar widget — monochrome initials-based, matching Figma design.
 class AvatarWidget extends StatelessWidget {
-  final String name;
+  final UserProfile? profile;
+  final String? name;
   final double size;
   final String? photoPath;
   final bool showOnlineDot;
@@ -12,19 +14,21 @@ class AvatarWidget extends StatelessWidget {
 
   const AvatarWidget({
     super.key,
-    required this.name,
+    this.profile,
+    this.name,
     this.size = 56,
     this.photoPath,
     this.showOnlineDot = false,
     this.showWaveBadge = false,
     this.onTap,
-  });
+  }) : assert(profile != null || name != null, 'Either profile or name must be provided');
 
   @override
   Widget build(BuildContext context) {
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
-    final colorIndex = name.hashCode.abs() % _avatarColors.length;
-    final bgColor = _avatarColors[colorIndex];
+    final displayName = profile?.name ?? name ?? '?';
+    final initials = _initials(displayName);
+    final colorIndex = displayName.codeUnitAt(0) % AppColors.avatarColors.length;
+    final bgColor = AppColors.avatarColors[colorIndex];
 
     return GestureDetector(
       onTap: onTap,
@@ -37,13 +41,10 @@ class AvatarWidget extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: bgColor,
-              boxShadow: [
-                BoxShadow(
-                  color: bgColor.withValues(alpha: 0.4),
-                  blurRadius: 12,
-                  spreadRadius: 1,
-                ),
-              ],
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.04),
+                width: 1,
+              ),
             ),
             child: photoPath != null
                 ? ClipOval(
@@ -52,47 +53,22 @@ class AvatarWidget extends StatelessWidget {
                       width: size,
                       height: size,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _InitialText(
-                        initial: initial,
-                        size: size,
-                      ),
+                      errorBuilder: (_, __, ___) => _InitialText(initials: initials, size: size),
                     ),
                   )
-                : _InitialText(initial: initial, size: size),
+                : _InitialText(initials: initials, size: size),
           ),
-          // Online dot
           if (showOnlineDot)
             Positioned(
-              right: 2,
-              bottom: 2,
+              right: 1,
+              bottom: 1,
               child: Container(
-                width: size * 0.22,
-                height: size * 0.22,
+                width: size * 0.2,
+                height: size * 0.2,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: AppColors.success,
-                  border: Border.all(
-                    color: AppColors.background,
-                    width: 2,
-                  ),
-                ),
-              ),
-            ),
-          // Wave badge
-          if (showWaveBadge)
-            Positioned(
-              right: -4,
-              top: -4,
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.wave,
-                ),
-                child: Icon(
-                  Icons.waving_hand_rounded,
-                  size: size * 0.22,
-                  color: Colors.white,
+                  color: AppColors.textSecondary,
+                  border: Border.all(color: AppColors.background, width: 1.5),
                 ),
               ),
             ),
@@ -101,37 +77,30 @@ class AvatarWidget extends StatelessWidget {
     );
   }
 
-  static const List<Color> _avatarColors = [
-    Color(0xFF6366F1), // Indigo
-    Color(0xFF06B6D4), // Cyan
-    Color(0xFFF472B6), // Pink
-    Color(0xFF10B981), // Emerald
-    Color(0xFFF59E0B), // Amber
-    Color(0xFFA855F7), // Purple
-    Color(0xFF14B8A6), // Teal
-    Color(0xFFEF4444), // Red
-    Color(0xFF8B5CF6), // Violet
-    Color(0xFF0EA5E9), // Sky
-    Color(0xFFFBBF24), // Gold
-    Color(0xFF34D399), // Mint
-  ];
+  static String _initials(String name) {
+    final parts = name.trim().split(' ');
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name.isNotEmpty ? name[0].toUpperCase() : '?';
+  }
 }
 
 class _InitialText extends StatelessWidget {
-  final String initial;
+  final String initials;
   final double size;
 
-  const _InitialText({required this.initial, required this.size});
+  const _InitialText({required this.initials, required this.size});
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Text(
-        initial,
+        initials,
         style: TextStyle(
-          color: Colors.white,
-          fontSize: size * 0.4,
-          fontWeight: FontWeight.w700,
+          color: const Color(0xFFFAFAFA),
+          fontSize: size * 0.35,
+          fontWeight: FontWeight.w500,
           letterSpacing: 0,
         ),
       ),

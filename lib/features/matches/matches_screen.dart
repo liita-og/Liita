@@ -5,7 +5,6 @@ import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/providers/providers.dart';
 import 'package:liita/core/widgets/avatar_widget.dart';
 
-/// Premium matches screen with glassmorphic cards.
 class MatchesScreen extends ConsumerWidget {
   const MatchesScreen({super.key});
 
@@ -14,67 +13,109 @@ class MatchesScreen extends ConsumerWidget {
     final matchesAsync = ref.watch(matchesProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Matches')),
-      body: matchesAsync.when(
-        data: (matchIds) {
-          if (matchIds.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.xl),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.wave.withValues(alpha: 0.08),
-                      ),
-                      child: Icon(
-                        Icons.favorite_outline_rounded,
-                        size: 40,
-                        color: AppColors.wave.withValues(alpha: 0.4),
-                      ),
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Header ──────────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Matches',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: -0.5,
                     ),
-                    const SizedBox(height: AppSpacing.lg),
-                    Text(
-                      'No matches yet',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: AppColors.textPrimary,
-                      ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'Mutual waves',
+                    style: TextStyle(
+                      color: AppColors.textTertiary,
+                      fontSize: 13,
                     ),
-                    const SizedBox(height: AppSpacing.sm),
-                    Text(
-                      'Wave at someone on the Radar\nto start connecting!',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.textTertiary,
-                        height: 1.5,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // ── List ────────────────────────────────────────────────────────
+            Expanded(
+              child: matchesAsync.when(
+                data: (matchIds) {
+                  if (matchIds.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 80),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                color: AppColors.surface,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: AppColors.glassBorder, width: 1),
+                              ),
+                              child: const Icon(
+                                Icons.people_outline_rounded,
+                                color: AppColors.textTertiary,
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No matches yet',
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Wave at someone on the Radar to get a match',
+                              style: TextStyle(
+                                color: AppColors.textTertiary,
+                                fontSize: 13,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    );
+                  }
+
+                  return ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 100),
+                    itemCount: matchIds.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, i) => _MatchTile(peerId: matchIds[i]),
+                  );
+                },
+                loading: () => const Center(
+                  child: CircularProgressIndicator(
+                    color: AppColors.textTertiary,
+                    strokeWidth: 1.5,
+                  ),
+                ),
+                error: (e, _) => Center(
+                  child: Text('$e', style: const TextStyle(color: AppColors.error, fontSize: 13)),
                 ),
               ),
-            );
-          }
-          return ListView.builder(
-            padding: const EdgeInsets.symmetric(
-              vertical: AppSpacing.sm,
-              horizontal: AppSpacing.md,
             ),
-            itemCount: matchIds.length,
-            itemBuilder: (context, i) {
-              final peerId = matchIds[i];
-              return _MatchTile(peerId: peerId);
-            },
-          );
-        },
-        loading: () => const Center(
-          child: CircularProgressIndicator(color: AppColors.primary),
-        ),
-        error: (e, _) => Center(
-          child: Text('Error: $e', style: const TextStyle(color: AppColors.error)),
+          ],
         ),
       ),
     );
@@ -97,93 +138,85 @@ class _MatchTile extends ConsumerWidget {
           ref.read(localProfileProvider)?.deviceId ?? '',
           peerId,
         );
-        return Padding(
-          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () {
-                context.push(
-                  '/chat/$matchId?name=${Uri.encodeComponent(profile.name)}',
-                );
-              },
-              borderRadius: AppRadius.lgAll,
-              child: Container(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: AppRadius.lgAll,
-                  border: Border.all(
-                    color: AppColors.glassBorder,
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    AvatarWidget(
-                      name: profile.name,
-                      size: 52,
-                      showOnlineDot: true,
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+        return GestureDetector(
+          onTap: () => context.push(
+            '/chat/$matchId?name=${Uri.encodeComponent(profile.name)}',
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.glassBorder, width: 1),
+            ),
+            child: Row(
+              children: [
+                AvatarWidget(profile: profile, size: 48),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        profile.name,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
                         children: [
                           Text(
-                            profile.name,
+                            'Seat ${profile.seatNumber}',
                             style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                              fontSize: 16,
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
                             ),
                           ),
-                          const SizedBox(height: 3),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 6),
+                            child: Text('·', style: TextStyle(color: AppColors.textTertiary, fontSize: 10)),
+                          ),
                           Text(
-                            'Seat ${profile.seatNumber} · ${profile.occupation}',
+                            profile.occupation,
                             style: const TextStyle(
                               color: AppColors.textTertiary,
-                              fontSize: 13,
+                              fontSize: 12,
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.10),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.chat_bubble_outline_rounded,
-                        color: AppColors.primary,
-                        size: 18,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceLight,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.glassBorder, width: 1),
+                  ),
+                  child: const Text(
+                    'Message',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         );
       },
-      loading: () => Padding(
-        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-        child: Container(
-          height: 76,
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: AppRadius.lgAll,
-          ),
-          child: const Center(
-            child: SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
+      loading: () => Container(
+        height: 72,
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
         ),
       ),
       error: (_, __) => const SizedBox.shrink(),
