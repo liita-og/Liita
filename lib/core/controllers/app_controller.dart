@@ -37,6 +37,8 @@ class AppController {
   /// The local device's unique ID. Set once on [initialize].
   String _localDeviceId = '';
 
+  bool _initialized = false;
+
   /// In-memory peer name cache to avoid DB lookups on every notification.
   final Map<String, String> _peerNameCache = {};
 
@@ -65,6 +67,8 @@ class AppController {
   ///
   /// Must be called once after the mesh service is started.
   Future<void> initialize(String localDeviceId) async {
+    if (_initialized) return;
+    _initialized = true;
     _localDeviceId = localDeviceId;
 
     // Subscribe to discovered peers for name cache

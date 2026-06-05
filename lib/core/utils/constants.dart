@@ -23,6 +23,10 @@ class AppConstants {
   static const int maxIcebreakerAnswerLength = 60;
   static const int maxBroadcastLength = 200;
 
+  // Database
+  /// Maximum number of broadcast messages fetched in a single query.
+  static const int kBroadcastQueryLimit = 200;
+
   // BLE Scan Response
   static const int scanResponseNameBytes = 20;
   static const int scanResponseAgeBytes = 1;
@@ -47,7 +51,6 @@ class AppConstants {
   static const String keyProfileJson = 'liita_profile';
   static const String keyOnboardingComplete = 'liita_onboarding_complete';
   static const String keyBlockList = 'liita_block_list';
-  static const String keyMockMode = 'liita_mock_mode';
 }
 
 class IcebreakerPrompts {

@@ -11,12 +11,16 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 
 class MeshPlugin(private val context: Context, flutterEngine: FlutterEngine) : MethodCallHandler {
     companion object {
         const val TAG = "MeshPlugin"
     }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.liita.app/mesh")
     private val peersChannel = EventChannel(flutterEngine.dartExecutor.binaryMessenger, "com.liita.app/peers")
@@ -70,10 +74,10 @@ class MeshPlugin(private val context: Context, flutterEngine: FlutterEngine) : M
 
     private fun setupServiceCallbacks() {
         meshService?.onPeerDiscovered = { profileJson ->
-            peersSink?.success(profileJson)
+            mainHandler.post { peersSink?.success(profileJson) }
         }
         meshService?.onPacketReceived = { packetJson ->
-            packetsSink?.success(packetJson)
+            mainHandler.post { packetsSink?.success(packetJson) }
         }
     }
 

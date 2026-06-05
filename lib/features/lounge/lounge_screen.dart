@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/models/broadcast_message.dart';
 import 'package:liita/core/providers/providers.dart';
-import 'package:uuid/uuid.dart';
 
 /// The Lounge — flight-wide broadcast chat.
 class LoungeScreen extends ConsumerStatefulWidget {
@@ -29,25 +28,26 @@ class _LoungeScreenState extends ConsumerState<LoungeScreen> {
     if (text.isEmpty) return;
     final localProfile = ref.read(localProfileProvider);
     if (localProfile == null) return;
-
-    final message = BroadcastMessage(
-      messageId: const Uuid().v4(),
-      fromId: localProfile.deviceId,
-      senderName: localProfile.name,
-      seatNumber: localProfile.seatNumber,
-      text: text,
-      timestamp: DateTime.now().millisecondsSinceEpoch,
-    );
-
-    final db = ref.read(databaseServiceProvider);
-    db.insertBroadcast(message);
+    ref.read(appControllerProvider).sendBroadcast(text, localProfile);
     _controller.clear();
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  /// Scroll to the bottom of the list.
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
       }
@@ -60,6 +60,14 @@ class _LoungeScreenState extends ConsumerState<LoungeScreen> {
     final localProfile = ref.watch(localProfileProvider);
     final peersAsync = ref.watch(peersProvider);
     final peerCount = peersAsync.whenOrNull(data: (p) => p.length) ?? 0;
+
+    // Auto-scroll to bottom whenever new messages arrive from any source.
+    ref.listen<AsyncValue<List<BroadcastMessage>>>(broadcastsProvider,
+        (prev, next) {
+      final prevLen = prev?.whenOrNull(data: (m) => m.length) ?? 0;
+      final nextLen = next.whenOrNull(data: (m) => m.length) ?? 0;
+      if (nextLen > prevLen) _scrollToBottom();
+    });
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -129,6 +137,7 @@ class _LoungeScreenState extends ConsumerState<LoungeScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                         itemCount: messages.length,
                         itemBuilder: (context, i) {
+                          // Natural order: index 0 = oldest (top), last = newest (bottom)
                           final msg = messages[i];
                           final isMe = msg.fromId == localProfile?.deviceId;
                           return _MessageBubble(message: msg, isMe: isMe);
@@ -149,7 +158,7 @@ class _LoungeScreenState extends ConsumerState<LoungeScreen> {
               child: SafeArea(
                 top: false,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 84),
+                  padding: const EdgeInsets.only(bottom: 12),
                   child: Container(
                     decoration: BoxDecoration(
                       color: AppColors.surface,

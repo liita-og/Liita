@@ -9,6 +9,7 @@ import 'package:liita/core/models/user_profile.dart';
 import 'package:liita/core/models/match_event.dart';
 import 'package:liita/core/models/chat_message.dart';
 import 'package:liita/core/models/broadcast_message.dart';
+import 'package:liita/core/utils/constants.dart';
 
 /// SQLite database service for all local persistence in the Liita BLE mesh app.
 ///
@@ -477,7 +478,7 @@ class DatabaseService {
         },
       );
     }
-    getBroadcasts(200).then((messages) {
+    getBroadcasts(AppConstants.kBroadcastQueryLimit).then((messages) {
       if (_broadcastController != null && !_broadcastController!.isClosed) {
         _broadcastController!.add(messages);
       }
@@ -487,7 +488,7 @@ class DatabaseService {
 
   void _notifyBroadcastListeners() {
     if (_broadcastController != null && !_broadcastController!.isClosed) {
-      getBroadcasts(200).then((messages) {
+      getBroadcasts(AppConstants.kBroadcastQueryLimit).then((messages) {
         if (_broadcastController != null && !_broadcastController!.isClosed) {
           _broadcastController!.add(messages);
         }

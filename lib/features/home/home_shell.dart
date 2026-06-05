@@ -29,6 +29,12 @@ class _HomeShellState extends ConsumerState<HomeShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final localProfile = ref.read(localProfileProvider);
+      if (localProfile != null) {
+        ref.read(appControllerProvider).initialize(localProfile.deviceId);
+      }
+    });
   }
 
   @override

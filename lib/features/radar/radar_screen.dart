@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:liita/core/theme/app_theme.dart';
-import 'package:liita/core/models/mesh_packet.dart';
 import 'package:liita/core/models/user_profile.dart';
 import 'package:liita/core/providers/providers.dart';
 import 'package:liita/core/widgets/avatar_widget.dart';
-import 'package:uuid/uuid.dart';
+
+final wavedPeersProvider = StateProvider<Set<String>>((ref) => {});
 
 /// Passenger discovery — stacked card deck (Figma design).
 class RadarScreen extends ConsumerStatefulWidget {
@@ -48,7 +48,8 @@ class _RadarScreenState extends ConsumerState<RadarScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
             children: [
               const Text(
                 'Radar',
@@ -59,37 +60,14 @@ class _RadarScreenState extends ConsumerState<RadarScreen> {
                   letterSpacing: -0.5,
                 ),
               ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: AppColors.glassBorder, width: 1),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: peers.isEmpty
-                            ? AppColors.textTertiary
-                            : AppColors.textPrimary,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${peers.length} nearby',
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
+              const SizedBox(width: 10),
+              Text(
+                peers.isEmpty ? 'no one nearby' : '${peers.length} nearby',
+                style: const TextStyle(
+                  color: AppColors.textTertiary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w400,
+                  letterSpacing: 0,
                 ),
               ),
             ],
@@ -145,17 +123,9 @@ class _RadarScreenState extends ConsumerState<RadarScreen> {
 
   Future<void> _sendWave(UserProfile peer, UserProfile? local) async {
     if (local == null) return;
-    final mesh = ref.read(meshServiceProvider);
-    final packet = MeshPacket(
-      packetId: const Uuid().v4(),
-      originId: local.deviceId,
-      destinationId: peer.deviceId,
-      ttl: 5,
-      payloadType: PayloadType.wave,
-      data: '${local.name}|${local.seatNumber}',
-      timestamp: DateTime.now().millisecondsSinceEpoch,
-    );
-    await mesh.sendPacket(packet);
+    await ref.read(appControllerProvider).sendWave(peer.deviceId);
+    ref.read(wavedPeersProvider.notifier)
+        .update((state) => {...state, peer.deviceId});
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -264,7 +234,7 @@ class _StackCard extends StatelessWidget {
   }
 }
 
-class _FrontCardContent extends StatelessWidget {
+class _FrontCardContent extends ConsumerWidget {
   final UserProfile peer;
   final VoidCallback onWave;
   final VoidCallback onNext;
@@ -276,7 +246,10 @@ class _FrontCardContent extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final wavedPeers = ref.watch(wavedPeersProvider);
+    final hasWaved = wavedPeers.contains(peer.deviceId);
+
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -382,18 +355,18 @@ class _FrontCardContent extends StatelessWidget {
               Expanded(
                 flex: 2,
                 child: GestureDetector(
-                  onTap: onWave,
+                  onTap: hasWaved ? null : onWave,
                   child: Container(
                     height: 48,
                     decoration: BoxDecoration(
-                      color: AppColors.primary,
+                      color: hasWaved ? AppColors.surface : AppColors.primary,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     alignment: Alignment.center,
-                    child: const Text(
-                      'Wave',
+                    child: Text(
+                      hasWaved ? 'Wave Sent' : 'Wave',
                       style: TextStyle(
-                        color: AppColors.textOnPrimary,
+                        color: hasWaved ? AppColors.textTertiary : AppColors.textOnPrimary,
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
                       ),

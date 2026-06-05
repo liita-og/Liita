@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/models/user_profile.dart';
@@ -46,10 +47,10 @@ class AvatarWidget extends StatelessWidget {
                 width: 1,
               ),
             ),
-            child: photoPath != null
+            child: (photoPath ?? profile?.photoHash) != null
                 ? ClipOval(
-                    child: Image.asset(
-                      photoPath!,
+                    child: Image.file(
+                      File((photoPath ?? profile?.photoHash)!),
                       width: size,
                       height: size,
                       fit: BoxFit.cover,

@@ -4,6 +4,7 @@ import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/services/database_service.dart';
 import 'package:liita/core/services/crypto_service.dart';
 import 'package:liita/core/services/storage_service.dart';
+import 'package:liita/core/services/mesh_service_flutter.dart';
 import 'package:liita/core/models/user_profile.dart';
 import 'package:liita/core/providers/providers.dart';
 import 'package:liita/router.dart';
@@ -25,6 +26,14 @@ void main() async {
   final bool isOnboarded = await storage.isOnboardingComplete();
   final UserProfile? storedProfile = isOnboarded ? await storage.loadProfile() : null;
 
+  // Initialize MeshService
+  final mesh = FlutterMeshService();
+  if (isOnboarded && storedProfile != null) {
+    debugPrint('[main] Starting mesh for profile ${storedProfile.deviceId}');
+    // Do not await, let it start in the background to avoid blocking UI frame
+    mesh.startMesh(storedProfile);
+  }
+
   debugPrint('[main] isOnboarded=$isOnboarded, profile=${storedProfile?.name}');
 
   runApp(
@@ -32,6 +41,7 @@ void main() async {
       overrides: [
         databaseServiceProvider.overrideWithValue(db),
         cryptoServiceProvider.overrideWithValue(crypto),
+        meshServiceProvider.overrideWithValue(mesh),
         // Seed the onboarding flag from storage
         onboardingCompleteProvider.overrideWith((ref) => isOnboarded && storedProfile != null),
         // Seed the local profile from storage (null if not onboarded)

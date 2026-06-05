@@ -2,88 +2,88 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 // =============================================================================
-// LIITA DESIGN SYSTEM — Monochromatic Minimal Edition
+// LIITA DESIGN SYSTEM — Warm Charcoal + Gold Edition
 // =============================================================================
-// Faithful implementation of the Figma/v0 design:
-// Near-black surfaces, off-white accent, Inter font, no colour noise.
+// Dual-tone palette: near-black warm charcoal base + muted amber/gold accent.
+// Minimal, premium, distinctive — not cold-grey, not generic.
 
 class AppColors {
   AppColors._();
 
-  // ── Backgrounds ──
-  static const Color background    = Color(0xFF09090B);
-  static const Color backgroundLight = Color(0xFF0F0F11);
-  static const Color surface       = Color(0xFF121214);
-  static const Color surfaceLight  = Color(0xFF1C1C1F);
+  // ── Backgrounds — warm charcoal ──
+  static const Color background    = Color(0xFF0E0D0C); // warm near-black
+  static const Color backgroundLight = Color(0xFF131210); // slightly lifted
+  static const Color surface       = Color(0xFF1A1816); // warm dark surface
+  static const Color surfaceLight  = Color(0xFF252220); // elevated surface
 
   // ── Glass / borders ──
-  static const Color glass         = Color(0x0FFFFFFF); // white 6%
-  static const Color glassBorder   = Color(0x0FFFFFFF); // white 6%
+  static const Color glass         = Color(0x14C9A85C); // gold tint 8%
+  static const Color glassBorder   = Color(0x14C9A85C); // gold tint 8%
 
-  // ── Accent — near-white (buttons, active state) ──
-  static const Color primary       = Color(0xFFEDEDED);
-  static const Color primaryLight  = Color(0xFFFAFAFA);
-  static const Color primaryDark   = Color(0xFFD4D4D4);
+  // ── Accent — muted gold (buttons, active state, indicators) ──
+  static const Color primary       = Color(0xFFC9A85C); // warm amber/gold
+  static const Color primaryLight  = Color(0xFFD4B870); // lighter gold
+  static const Color primaryDark   = Color(0xFFAA8C48); // deeper gold
 
-  // ── Keep these for BLE status indicators only ──
-  static const Color accent        = Color(0xFFEDEDED);
-  static const Color accentLight   = Color(0xFFFAFAFA);
-  static const Color accentDark    = Color(0xFFD4D4D4);
-  static const Color accentMuted   = Color(0xFFA1A1AA);
+  // ── Keep for BLE status indicators ──
+  static const Color accent        = Color(0xFFC9A85C);
+  static const Color accentLight   = Color(0xFFD4B870);
+  static const Color accentDark    = Color(0xFFAA8C48);
+  static const Color accentMuted   = Color(0xFF8A7145);
 
-  // ── Semantic colours (minimal usage) ──
-  static const Color wave          = Color(0xFFEDEDED);
-  static const Color waveLight     = Color(0xFFFAFAFA);
-  static const Color waveDark      = Color(0xFFD4D4D4);
-  static const Color match         = Color(0xFFEDEDED);
-  static const Color matchLight    = Color(0xFFFAFAFA);
-  static const Color success       = Color(0xFF52525B);
-  static const Color successDark   = Color(0xFF3F3F46);
+  // ── Semantic colours ──
+  static const Color wave          = Color(0xFFC9A85C);
+  static const Color waveLight     = Color(0xFFD4B870);
+  static const Color waveDark      = Color(0xFFAA8C48);
+  static const Color match         = Color(0xFFC9A85C);
+  static const Color matchLight    = Color(0xFFD4B870);
+  static const Color success       = Color(0xFF4A4540);
+  static const Color successDark   = Color(0xFF3A3530);
   static const Color error         = Color(0xFFEF4444);
-  static const Color warning       = Color(0xFFF59E0B);
+  static const Color warning       = Color(0xFFC9A85C);
 
   // ── Text hierarchy ──
-  static const Color textPrimary   = Color(0xFFFAFAFA);
-  static const Color textSecondary = Color(0xFFA1A1AA);
-  static const Color textTertiary  = Color(0xFF52525B);
-  static const Color textOnPrimary = Color(0xFF09090B); // dark text on light button
+  static const Color textPrimary   = Color(0xFFF5F0E8); // warm off-white
+  static const Color textSecondary = Color(0xFF9E9589); // warm grey
+  static const Color textTertiary  = Color(0xFF5C5450); // muted warm grey
+  static const Color textOnPrimary = Color(0xFF0E0D0C); // dark text on gold button
 
   // ── Structural ──
-  static const Color divider       = Color(0xFF27272A);
-  static const Color shimmer       = Color(0xFF1C1C1F);
+  static const Color divider       = Color(0xFF2A2620);
+  static const Color shimmer       = Color(0xFF252220);
 
-  // ── Avatar backgrounds (monochrome palette) ──
+  // ── Avatar backgrounds (warm tones) ──
   static const List<Color> avatarColors = [
-    Color(0xFF27272A),
-    Color(0xFF1C1C1F),
-    Color(0xFF3F3F46),
-    Color(0xFF18181B),
+    Color(0xFF2A2620),
+    Color(0xFF1E1C18),
+    Color(0xFF352F28),
+    Color(0xFF181614),
   ];
 
-  // ── Gradients (subtle, monochromatic) ──
+  // ── Gradients ──
   static const LinearGradient primaryGradient = LinearGradient(
-    colors: [Color(0xFFEDEDED), Color(0xFFD4D4D4)],
+    colors: [Color(0xFFC9A85C), Color(0xFFAA8C48)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
   static const LinearGradient surfaceGradient = LinearGradient(
-    colors: [Color(0xFF121214), Color(0xFF1C1C1F)],
+    colors: [Color(0xFF1A1816), Color(0xFF252220)],
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
   );
 
-  // Legacy gradient aliases kept to avoid breaking existing references
+  // Legacy gradient aliases
   static const LinearGradient accentGradient    = primaryGradient;
   static const LinearGradient radarGradient     = primaryGradient;
   static const LinearGradient sentBubbleGradient = primaryGradient;
   static const LinearGradient navGlowGradient   = LinearGradient(
-    colors: [Color(0x00EDEDED), Color(0x22EDEDED), Color(0x00EDEDED)],
+    colors: [Color(0x00C9A85C), Color(0x22C9A85C), Color(0x00C9A85C)],
     begin: Alignment.centerLeft,
     end: Alignment.centerRight,
   );
   static const RadialGradient radarPulseGradient = RadialGradient(
-    colors: [Color(0x22EDEDED), Color(0x11EDEDED), Color(0x00EDEDED)],
+    colors: [Color(0x22C9A85C), Color(0x11C9A85C), Color(0x00C9A85C)],
     stops: [0.0, 0.5, 1.0],
   );
 }
@@ -200,6 +200,7 @@ class AppTheme {
         onSecondary: AppColors.textOnPrimary,
         onSurface: AppColors.textPrimary,
         onError: AppColors.textPrimary,
+        brightness: Brightness.dark,
       ),
       textTheme: textTheme.copyWith(
         headlineLarge: textTheme.headlineLarge?.copyWith(

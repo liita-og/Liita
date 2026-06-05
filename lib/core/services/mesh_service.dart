@@ -3,9 +3,8 @@ import 'package:liita/core/models/user_profile.dart';
 
 /// Abstract interface for the Liita BLE mesh networking layer.
 ///
-/// Implementations handle peer discovery, packet routing, and lifecycle
-/// management. Use [MockMeshService] for emulator/testing environments and
-/// [FlutterMeshService] for real BLE hardware via platform channels.
+/// The active implementation is [FlutterMeshService], which bridges to the
+/// native Android BLE stack via platform channels (MethodChannel + EventChannel).
 abstract class MeshService {
   /// Starts the mesh network, advertising [localProfile] to nearby peers
   /// and beginning the discovery process.

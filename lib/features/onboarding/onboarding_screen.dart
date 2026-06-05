@@ -72,6 +72,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         occupation: _occupationController.text.trim(),
         icebreakerPrompt: IcebreakerPrompts.prompts[_selectedPromptIndex],
         icebreakerAnswer: _icebreakerAnswerController.text.trim(),
+        photoHash: _photoPath,
       );
 
       // Capture ALL providers synchronously BEFORE any await.
