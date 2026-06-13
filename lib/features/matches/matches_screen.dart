@@ -26,7 +26,7 @@ class MatchesScreen extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Matches',
+                    'Connections',
                     style: TextStyle(
                       color: AppColors.textPrimary,
                       fontSize: 24,
@@ -75,7 +75,7 @@ class MatchesScreen extends ConsumerWidget {
                             ),
                             const SizedBox(height: 16),
                             const Text(
-                              'No matches yet',
+                              'No connections yet',
                               style: TextStyle(
                                 color: AppColors.textPrimary,
                                 fontSize: 16,
@@ -84,7 +84,7 @@ class MatchesScreen extends ConsumerWidget {
                             ),
                             const SizedBox(height: 6),
                             const Text(
-                              'Wave at someone on the Radar to get a match',
+                              'Wave at someone on the Radar to get a connection',
                               style: TextStyle(
                                 color: AppColors.textTertiary,
                                 fontSize: 13,
@@ -165,46 +165,7 @@ class _MatchTile extends ConsumerWidget {
                           fontWeight: FontWeight.w500,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Text(
-                            'Seat ${profile.seatNumber}',
-                            style: const TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 6),
-                            child: Text('·', style: TextStyle(color: AppColors.textTertiary, fontSize: 10)),
-                          ),
-                          Text(
-                            profile.occupation,
-                            style: const TextStyle(
-                              color: AppColors.textTertiary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
                     ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceLight,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppColors.glassBorder, width: 1),
-                  ),
-                  child: const Text(
-                    'Message',
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
                   ),
                 ),
               ],

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:liita/core/models/user_profile.dart';
+import 'package:liita/core/utils/constants.dart';
 
 /// Persistent key-value store backed by flutter_secure_storage.
 ///
@@ -17,9 +18,6 @@ class StorageService {
 
   static final StorageService instance = StorageService._();
 
-  static const _kOnboardingDone = 'has_completed_onboarding';
-  static const _kProfile = 'local_user_profile';
-
   static const _storageOptions = AndroidOptions(encryptedSharedPreferences: true);
   static final _storage = FlutterSecureStorage(aOptions: _storageOptions);
 
@@ -31,7 +29,7 @@ class StorageService {
   /// exists in storage. A missing profile always redirects to onboarding.
   Future<bool> isOnboardingComplete() async {
     try {
-      final flag = await _storage.read(key: _kOnboardingDone);
+      final flag = await _storage.read(key: AppConstants.keyOnboardingComplete);
       if (flag != 'true') return false;
       // Null-profile guard: flag alone is not enough
       final profile = await loadProfile();
@@ -45,10 +43,8 @@ class StorageService {
   /// Marks onboarding as complete and persists the profile atomically.
   Future<void> completeOnboarding(UserProfile profile) async {
     try {
-      await Future.wait([
-        _storage.write(key: _kOnboardingDone, value: 'true'),
-        _storage.write(key: _kProfile, value: jsonEncode(profile.toJson())),
-      ]);
+      await _storage.write(key: AppConstants.keyProfileJson, value: jsonEncode(profile.toJson()));
+      await _storage.write(key: AppConstants.keyOnboardingComplete, value: 'true');
       debugPrint('[StorageService] Onboarding complete, profile saved.');
     } catch (e) {
       debugPrint('[StorageService] completeOnboarding error: $e');
@@ -56,13 +52,24 @@ class StorageService {
     }
   }
 
+  /// Sets the onboarding flag without touching the profile.
+  Future<void> setOnboardingComplete(bool complete) async {
+    try {
+      if (complete) {
+        await _storage.write(key: AppConstants.keyOnboardingComplete, value: 'true');
+      } else {
+        await _storage.delete(key: AppConstants.keyOnboardingComplete);
+      }
+    } catch (e) {
+      debugPrint('[StorageService] setOnboardingComplete error: $e');
+    }
+  }
+
   /// Clears all persisted state — called when user starts a "New Flight".
   Future<void> clearAll() async {
     try {
-      await Future.wait([
-        _storage.delete(key: _kOnboardingDone),
-        _storage.delete(key: _kProfile),
-      ]);
+      await _storage.delete(key: AppConstants.keyOnboardingComplete);
+      await _storage.delete(key: AppConstants.keyProfileJson);
       debugPrint('[StorageService] Cleared all persistent state.');
     } catch (e) {
       debugPrint('[StorageService] clearAll error: $e');
@@ -77,7 +84,7 @@ class StorageService {
   /// Loads and deserialises the stored [UserProfile], or null if absent.
   Future<UserProfile?> loadProfile() async {
     try {
-      final raw = await _storage.read(key: _kProfile);
+      final raw = await _storage.read(key: AppConstants.keyProfileJson);
       if (raw == null) return null;
       final map = jsonDecode(raw) as Map<String, dynamic>;
       return UserProfile.fromJson(map);
@@ -91,11 +98,12 @@ class StorageService {
   Future<void> saveProfile(UserProfile profile) async {
     try {
       await _storage.write(
-        key: _kProfile,
+        key: AppConstants.keyProfileJson,
         value: jsonEncode(profile.toJson()),
       );
     } catch (e) {
       debugPrint('[StorageService] saveProfile error: $e');
+      rethrow;
     }
   }
 }

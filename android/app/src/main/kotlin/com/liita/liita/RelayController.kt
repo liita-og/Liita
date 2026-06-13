@@ -20,9 +20,13 @@ class RelayController(
             return
         }
 
+        // RC-15: recordAndGetDegree is the canonical atomic check-and-increment.
+        // getDegree alone is non-atomic when called separately from handleIncomingGattWrite
+        // which already called recordAndGetDegree. We trust the degree already recorded
+        // upstream — just relay if degree == 1 (seen exactly once, never relayed).
         val degree = deduplicationCache.getDegree(packet.packetId)
-        if (degree > 1) {
-            Log.d("LiitaBLE", "[LiitaBLE] packet dropped (dedup already seen): ${packet.packetId}")
+        if (degree != 1) {
+            Log.d("LiitaBLE", "[LiitaBLE] relay dropped (degree=$degree): ${packet.packetId}")
             return
         }
 
@@ -34,8 +38,11 @@ class RelayController(
         
         scope.launch {
             delay(jitterMs)
+            // RC-15: After jitter, only relay if degree is STILL exactly 1.
+            // If degree climbed to 2+ during the jitter window, another node
+            // already relayed this packet and we should suppress.
             val currentDegree = deduplicationCache.getDegree(packet.packetId)
-            if (currentDegree <= 2) {
+            if (currentDegree == 1) {
                 Log.d("LiitaBLE", "[LiitaBLE] packet relayed: ${relayedPacket.packetId} ttl=${relayedPacket.ttl}")
                 onRelayAction(relayedPacket)
             } else {

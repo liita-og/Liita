@@ -26,6 +26,7 @@ class DatabaseService {
   final Map<String, StreamController<List<ChatMessage>>> _messageControllers =
       {};
   StreamController<List<BroadcastMessage>>? _broadcastController;
+  StreamController<List<String>>? _matchesController;
 
   /// Opens (or creates) the database and runs the schema migration.
   Future<void> initialize() async {
@@ -232,6 +233,18 @@ class DatabaseService {
     );
   }
 
+  Future<void> deleteMatchEvent({
+    required MatchEventType eventType,
+    required String actorId,
+    required String targetId,
+  }) async {
+    await _database.delete(
+      'match_events',
+      where: 'event_type = ? AND actor_id = ? AND target_id = ?',
+      whereArgs: [eventType.value, actorId, targetId],
+    );
+  }
+
   /// Returns `true` if [actorId] has sent a wave to [targetId].
   Future<bool> hasWaveSent(String actorId, String targetId) async {
     final rows = await _database.query(
@@ -243,32 +256,54 @@ class DatabaseService {
     return rows.isNotEmpty;
   }
 
-  /// Returns device IDs of all mutual matches (both waved, no blocks).
+  /// Returns `true` if [fromId] has ever sent a wave **to** [toId].
+  /// Used to detect the race-condition case where both devices wave at
+  /// the same time: when A sends a wave to B, A checks whether B already
+  /// waved at A (i.e. fromId = B, toId = A).
+  ///
+  /// Note: This method checks for `waveReceived` because from the perspective
+  /// of the target device (`toId`), the event recorded is a wave received from the actor (`fromId`).
+  Future<bool> hasWaveFrom(String fromId, String toId) async {
+    // A waveReceived stored by [toId]'s device means [fromId] waved at [toId].
+    // But on [fromId]'s device we look for the waveSent where the actor is
+    // [fromId] and the target is [toId].
+    final rows = await _database.query(
+      'match_events',
+      where: 'actor_id = ? AND target_id = ? AND event_type = ?',
+      whereArgs: [fromId, toId, MatchEventType.waveReceived.value],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  /// Returns device IDs of all confirmed matches (MATCH_CREATED events).
   Future<List<String>> getMatches(String localDeviceId) async {
-    // Find all peers the local user waved at
-    final sentWaves = await _database.query(
+    final matches = await _database.query(
       'match_events',
       columns: ['target_id'],
       where: 'actor_id = ? AND event_type = ?',
-      whereArgs: [localDeviceId, MatchEventType.waveSent.value],
+      whereArgs: [localDeviceId, MatchEventType.matchCreated.value],
     );
-    final wavedAtIds = sentWaves.map((r) => r['target_id'] as String).toSet();
-    if (wavedAtIds.isEmpty) return [];
 
-    // Check which ones waved back and aren't blocked
     final matched = <String>[];
-    for (final targetId in wavedAtIds) {
-      final reciprocal = await _database.query(
-        'match_events',
-        where: 'actor_id = ? AND target_id = ? AND event_type = ?',
-        whereArgs: [targetId, localDeviceId, MatchEventType.waveSent.value],
-        limit: 1,
-      );
-      if (reciprocal.isNotEmpty && !await isBlocked(localDeviceId, targetId)) {
+    for (final row in matches) {
+      final targetId = row['target_id'] as String;
+      if (!await isBlocked(localDeviceId, targetId)) {
         matched.add(targetId);
       }
     }
     return matched;
+  }
+
+  /// Returns `true` if a MATCH_CREATED event exists between local and peer.
+  Future<bool> hasMatchCreated(String localDeviceId, String peerId) async {
+    final rows = await _database.query(
+      'match_events',
+      where: 'actor_id = ? AND target_id = ? AND event_type = ?',
+      whereArgs: [localDeviceId, peerId, MatchEventType.matchCreated.value],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
   }
 
   /// Returns `true` if either party has blocked the other.
@@ -438,6 +473,20 @@ class DatabaseService {
     );
   }
 
+  /// Attempts to insert a packet ID into the dedup table.
+  /// Returns `true` if the packet is new (was inserted), or `false` if it
+  /// already existed.
+  ///
+  /// Note: SQLite's `INSERT OR IGNORE` returns the number of rows inserted.
+  /// Therefore, `count > 0` correctly evaluates to true only for new packets.
+  Future<bool> markPacketSeenIfNew(String packetId) async {
+    final count = await _database.rawInsert(
+      'INSERT OR IGNORE INTO packet_dedup (packet_id, received_at) VALUES (?, ?)',
+      [packetId, DateTime.now().millisecondsSinceEpoch],
+    );
+    return count > 0;
+  }
+
   Future<void> pruneDedup({int maxAgeMs = 600000}) async {
     final cutoff = DateTime.now().millisecondsSinceEpoch - maxAgeMs;
     await _database.delete(
@@ -497,6 +546,41 @@ class DatabaseService {
   }
 
   // ===========================================================================
+  // MATCHES STREAM
+  // ===========================================================================
+
+  /// Reactive stream of matched peer device IDs.
+  /// Emits the full current list whenever [notifyMatchesChanged] is called.
+  Stream<List<String>> watchMatches(String localDeviceId) {
+    if (_matchesController == null || _matchesController!.isClosed) {
+      _matchesController = StreamController<List<String>>.broadcast(
+        onCancel: () {
+          _matchesController?.close();
+          _matchesController = null;
+        },
+      );
+    }
+    // Emit initial value immediately.
+    getMatches(localDeviceId).then((ids) {
+      if (_matchesController != null && !_matchesController!.isClosed) {
+        _matchesController!.add(ids);
+      }
+    });
+    return _matchesController!.stream;
+  }
+
+  /// Call after inserting a matchCreated event to push updated list to listeners.
+  void notifyMatchesChanged(String localDeviceId) {
+    if (_matchesController != null && !_matchesController!.isClosed) {
+      getMatches(localDeviceId).then((ids) {
+        if (_matchesController != null && !_matchesController!.isClosed) {
+          _matchesController!.add(ids);
+        }
+      });
+    }
+  }
+
+  // ===========================================================================
   // LIFECYCLE
   // ===========================================================================
 
@@ -508,6 +592,10 @@ class DatabaseService {
     if (_broadcastController != null && !_broadcastController!.isClosed) {
       await _broadcastController!.close();
       _broadcastController = null;
+    }
+    if (_matchesController != null && !_matchesController!.isClosed) {
+      await _matchesController!.close();
+      _matchesController = null;
     }
     await _db?.close();
     _db = null;

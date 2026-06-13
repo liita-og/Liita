@@ -193,7 +193,7 @@ class ProfileScreen extends ConsumerWidget {
           style: TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w500),
         ),
         content: const Text(
-          'This will clear your profile and onboarding data. You will need to set up again on your next flight.',
+          'This will end your current flight session. Your profile will be saved for your next flight.',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.5),
         ),
         actions: [
@@ -210,8 +210,7 @@ class ProfileScreen extends ConsumerWidget {
     );
 
     if (confirmed == true) {
-      await StorageService.instance.clearAll();
-      ref.read(localProfileProvider.notifier).state = null;
+      await StorageService.instance.setOnboardingComplete(false);
       ref.read(onboardingCompleteProvider.notifier).state = false;
     }
   }
@@ -220,18 +219,23 @@ class ProfileScreen extends ConsumerWidget {
 class _StatsRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final wavedPeers = ref.watch(wavedAtProvider);
     final matchesAsync = ref.watch(matchesProvider);
-    final matchCount = matchesAsync.whenOrNull(data: (ids) => ids.length) ?? 0;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        _StatItem(value: '6', label: 'Waves'),
-        _Divider(),
-        _StatItem(value: '$matchCount', label: 'Matches'),
-        _Divider(),
-        _StatItem(value: '14', label: 'Messages'),
-      ],
+    return matchesAsync.when(
+      data: (ids) => Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _StatItem(value: '${wavedPeers.length}', label: 'Waves'),
+          _Divider(),
+          _StatItem(value: '${ids.length}', label: 'Connections'),
+        ],
+      ),
+      loading: () => const SizedBox(),
+      error: (e, _) {
+        debugPrint('[Profile] provider error: $e');
+        return Text('Error: $e', style: const TextStyle(color: AppColors.error));
+      },
     );
   }
 }

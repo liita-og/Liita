@@ -16,13 +16,13 @@ data class MeshPacket(
 
     fun toJson(): String {
         val json = JSONObject()
-        json.put("packetId", packetId)
-        json.put("originId", originId)
-        json.put("destinationId", destinationId)
-        json.put("ttl", ttl)
-        json.put("payloadType", payloadType)
-        json.put("data", data)
-        json.put("timestamp", timestamp)
+        json.put("p", packetId)
+        json.put("o", originId)
+        json.put("d", destinationId)
+        json.put("l", ttl)
+        json.put("y", payloadType)
+        json.put("a", data)
+        json.put("t", timestamp)
         return json.toString()
     }
 
@@ -31,13 +31,13 @@ data class MeshPacket(
             return try {
                 val json = JSONObject(jsonString)
                 MeshPacket(
-                    packetId = json.getString("packetId"),
-                    originId = json.getString("originId"),
-                    destinationId = json.getString("destinationId"),
-                    ttl = json.optInt("ttl", 8),
-                    payloadType = json.getString("payloadType"),
-                    data = json.optString("data", ""),
-                    timestamp = json.getLong("timestamp")
+                    packetId = json.getString("p"),
+                    originId = json.getString("o"),
+                    destinationId = json.getString("d"),
+                    ttl = json.optInt("l", 8),
+                    payloadType = json.getString("y"),
+                    data = json.optString("a", ""),
+                    timestamp = json.getLong("t")
                 )
             } catch (e: Exception) {
                 null

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:liita/core/models/mesh_packet.dart';
 import 'package:liita/core/models/user_profile.dart';
@@ -62,10 +63,21 @@ class FlutterMeshService implements MeshService {
   Stream<MeshPacket> get incomingPackets {
     _packetsStream ??= _packetsEventChannel
         .receiveBroadcastStream()
-        .map<MeshPacket>((dynamic event) {
-      final json = _decodeEvent(event);
-      return MeshPacket.fromJson(json);
-    }).asBroadcastStream();
+        .where((dynamic event) => event != null)
+        .map<MeshPacket?>((dynamic event) {
+          // RC-7: Catch parse errors per-packet; return null rather than
+          // throwing into the stream (which terminates broadcast subscriptions).
+          try {
+            final json = _decodeEvent(event);
+            return MeshPacket.fromJson(json);
+          } catch (e, st) {
+            debugPrint('FlutterMeshService: packet parse error (packet dropped): $e\n$st');
+            return null;
+          }
+        })
+        .where((packet) => packet != null)
+        .cast<MeshPacket>()
+        .asBroadcastStream();
     return _packetsStream!;
   }
 
@@ -76,12 +88,19 @@ class FlutterMeshService implements MeshService {
   Future<void> startMesh(UserProfile localProfile) async {
     if (_isRunning) return;
 
-    await _methodChannel.invokeMethod<void>(
-      'startMesh',
-      {'profileJson': jsonEncode(localProfile.toJson())},
-    );
+    // RC-8: Only set _isRunning = true after the native call succeeds.
+    try {
+      await _methodChannel.invokeMethod<void>(
+        'startMesh',
+        {'profileJson': jsonEncode(localProfile.toJson())},
+      );
+      _isRunning = true;
+    } catch (e, st) {
+      debugPrint('FlutterMeshService.startMesh failed: $e\n$st');
+      _isRunning = false;
+      rethrow;   // Surface the error to the caller (Riverpod provider / UI)
+    }
 
-    _isRunning = true;
     _discoveredDeviceIds.clear();
 
     // Track unique device IDs and emit updated peer counts.
@@ -107,7 +126,11 @@ class FlutterMeshService implements MeshService {
 
   @override
   Future<void> sendPacket(MeshPacket packet) async {
-    if (!_isRunning) return;
+    if (!_isRunning) {
+      // RC-8: Log the silent drop so bind races are diagnosable.
+      debugPrint('FlutterMeshService.sendPacket: dropped — mesh not running (service bind may not have completed)');
+      return;
+    }
 
     await _methodChannel.invokeMethod<void>(
       'sendPacket',

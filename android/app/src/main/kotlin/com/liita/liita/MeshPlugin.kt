@@ -32,12 +32,17 @@ class MeshPlugin(private val context: Context, flutterEngine: FlutterEngine) : M
     private var peersSink: EventChannel.EventSink? = null
     private var packetsSink: EventChannel.EventSink? = null
 
+    // RC-5: Queue method calls that arrive before the service bind completes.
+    private val pendingCalls = ArrayDeque<Pair<MethodCall, Result>>()
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as MeshForegroundService.LocalBinder
             meshService = binder.getService()
             isBound = true
             setupServiceCallbacks()
+            // RC-5: Drain any calls that arrived before the bind completed.
+            drainPendingCalls()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -81,7 +86,26 @@ class MeshPlugin(private val context: Context, flutterEngine: FlutterEngine) : M
         }
     }
 
+    // RC-5: Flush all queued method calls now that the service is live.
+    private fun drainPendingCalls() {
+        Log.d(TAG, "[LiitaBLE] drainPendingCalls: flushing ${pendingCalls.size} queued call(s)")
+        while (pendingCalls.isNotEmpty()) {
+            val (call, result) = pendingCalls.removeFirst()
+            dispatchMethodCall(call, result)
+        }
+    }
+
     override fun onMethodCall(call: MethodCall, result: Result) {
+        // RC-5: If not yet bound, queue the call for later execution.
+        if (!isBound || meshService == null) {
+            Log.w(TAG, "[LiitaBLE] onMethodCall '${call.method}' queued — service not yet bound")
+            pendingCalls.add(Pair(call, result))
+            return
+        }
+        dispatchMethodCall(call, result)
+    }
+
+    private fun dispatchMethodCall(call: MethodCall, result: Result) {
         when (call.method) {
             "startMesh" -> {
                 val profileJson = call.argument<String>("profileJson")

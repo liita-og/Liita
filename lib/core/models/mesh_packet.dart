@@ -46,23 +46,23 @@ class MeshPacket {
   }
 
   Map<String, dynamic> toJson() => {
-    'packetId': packetId,
-    'originId': originId,
-    'destinationId': destinationId,
-    'ttl': ttl,
-    'payloadType': payloadType.code,
-    'data': data,
-    'timestamp': timestamp,
+    'p': packetId,
+    'o': originId,
+    'd': destinationId,
+    'l': ttl,
+    'y': payloadType.code,
+    'a': data,
+    't': timestamp,
   };
 
   factory MeshPacket.fromJson(Map<String, dynamic> json) => MeshPacket(
-    packetId: json['packetId'] as String,
-    originId: json['originId'] as String,
-    destinationId: json['destinationId'] as String,
-    ttl: json['ttl'] as int? ?? 8,
-    payloadType: PayloadType.fromCode(json['payloadType'] as String),
-    data: json['data'] as String? ?? '',
-    timestamp: json['timestamp'] as int,
+    packetId: json['p'] as String,
+    originId: json['o'] as String,
+    destinationId: json['d'] as String,
+    ttl: json['l'] as int? ?? 8,
+    payloadType: PayloadType.fromCode(json['y'] as String),
+    data: json['a'] as String? ?? '',
+    timestamp: json['t'] as int,
   );
 
   @override

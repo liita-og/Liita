@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:uuid/uuid.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:liita/core/theme/app_theme.dart';
@@ -31,6 +31,34 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final _icebreakerAnswerController = TextEditingController();
   int _selectedPromptIndex = 0;
   String? _photoPath;
+  String? _existingDeviceId;
+  bool _isCompleting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadExistingProfile();
+  }
+
+  Future<void> _loadExistingProfile() async {
+    final profile = await StorageService.instance.loadProfile();
+    if (profile != null) {
+      setState(() {
+        _existingDeviceId = profile.deviceId;
+        _nameController.text = profile.name;
+        _ageController.text = profile.age.toString();
+        _occupationController.text = profile.occupation;
+        _photoPath = profile.photoHash;
+        
+        // Find the prompt index
+        final idx = IcebreakerPrompts.prompts.indexOf(profile.icebreakerPrompt);
+        if (idx >= 0) _selectedPromptIndex = idx;
+      });
+      
+      // Optionally skip the Welcome and Name/Age pages directly
+      // _pageController.jumpToPage(2);
+    }
+  }
 
   @override
   void dispose() {
@@ -62,10 +90,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   void _completeOnboarding() async {
+    if (_isCompleting) return;
+    setState(() => _isCompleting = true);
+
     try {
       debugPrint('[Onboarding] Starting completion flow...');
       final profile = UserProfile(
-        deviceId: const Uuid().v4(),
+        deviceId: _existingDeviceId ?? const Uuid().v4(),
         name: _nameController.text.trim(),
         age: int.tryParse(_ageController.text) ?? 25,
         seatNumber: _seatController.text.trim().toUpperCase(),
@@ -75,21 +106,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         photoHash: _photoPath,
       );
 
-      // Capture ALL providers synchronously BEFORE any await.
       final db = ref.read(databaseServiceProvider);
       final appController = ref.read(appControllerProvider);
       final mesh = ref.read(meshServiceProvider);
-      final router = GoRouter.of(context);
 
-      // Persist to secure storage FIRST — ensures restart resilience.
       debugPrint('[Onboarding] Persisting to secure storage...');
       await StorageService.instance.completeOnboarding(profile);
 
-      // Set in-memory state (triggers router redirect to /radar)
-      ref.read(localProfileProvider.notifier).state = profile;
-      ref.read(onboardingCompleteProvider.notifier).state = true;
-
-      // DB + service init after state change (uses locally-captured vars)
       debugPrint('[Onboarding] Saving profile to DB...');
       await db.upsertProfile(profile);
 
@@ -107,12 +130,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       debugPrint('[Onboarding] Starting mesh service...');
       await mesh.startMesh(profile);
 
-      debugPrint('[Onboarding] Navigation triggered by provider state change.');
-      router.go('/radar');
+      debugPrint('[Onboarding] Updating local state...');
+      ref.read(localProfileProvider.notifier).state = profile;
+      ref.read(onboardingCompleteProvider.notifier).state = true;
     } catch (e, st) {
       debugPrint('[Onboarding] ERROR in _completeOnboarding: $e');
       debugPrint('$st');
       if (mounted) {
+        setState(() => _isCompleting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Setup failed: $e')),
         );
@@ -135,7 +160,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 vertical: AppSpacing.md,
               ),
               child: Row(
-                children: List.generate(6, (i) {
+                children: List.generate(5, (i) {
                   final isActive = i <= _currentPage;
                   return Expanded(
                     child: AnimatedContainer(
@@ -160,7 +185,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 physics: const NeverScrollableScrollPhysics(),
                 onPageChanged: (i) => setState(() => _currentPage = i),
                 children: [
-                  _WelcomePage(onNext: _nextPage),
                   _NameAgePage(
                     nameController: _nameController,
                     ageController: _ageController,
@@ -192,6 +216,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     name: _nameController.text,
                     onComplete: _completeOnboarding,
                     onBack: _previousPage,
+                    isLoading: _isCompleting,
                   ),
                 ],
               ),
@@ -204,84 +229,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 }
 
 // =============================================================================
-// Step 1: Welcome
-// =============================================================================
-
-class _WelcomePage extends StatelessWidget {
-  final VoidCallback onNext;
-
-  const _WelcomePage({required this.onNext});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(AppSpacing.xl),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Spacer(),
-          Container(
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: AppColors.primaryGradient,
-              boxShadow: AppShadows.primaryGlow,
-            ),
-            child: const Icon(
-              Icons.connecting_airports_rounded,
-              size: 56,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.xl),
-          Text(
-            'Liita',
-            style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-              fontSize: 42,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -1.5,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            'Connect with fellow travelers',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: AppColors.textSecondary,
-              fontSize: 16,
-            ),
-          ),
-          const Spacer(),
-          SizedBox(
-            width: double.infinity,
-            height: 56,
-            child: ElevatedButton(
-              onPressed: onNext,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: AppRadius.mdAll,
-                ),
-              ),
-              child: const Text(
-                'Get Started',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textOnPrimary,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: AppSpacing.xl),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// Step 2: Name + Age
+// Step 1: Name + Age
 // =============================================================================
 
 class _NameAgePage extends StatelessWidget {
@@ -536,7 +484,19 @@ class _PhotoPage extends StatelessWidget {
         imageQuality: 70,
       );
       if (picked != null) {
-        onPhotoPicked(picked.path);
+        final targetPath = '${picked.path}_compressed.jpg';
+        final compressed = await FlutterImageCompress.compressAndGetFile(
+          picked.path,
+          targetPath,
+          minWidth: 256,
+          minHeight: 256,
+          quality: 50,
+        );
+        if (compressed != null) {
+          onPhotoPicked(compressed.path);
+        } else {
+          onPhotoPicked(picked.path);
+        }
       }
     } catch (e) {
       if (context.mounted) {
@@ -613,11 +573,13 @@ class _ConfirmationPage extends StatelessWidget {
   final String name;
   final VoidCallback onComplete;
   final VoidCallback onBack;
+  final bool isLoading;
 
   const _ConfirmationPage({
     required this.name,
     required this.onComplete,
     required this.onBack,
+    this.isLoading = false,
   });
 
   @override
@@ -669,21 +631,30 @@ class _ConfirmationPage extends StatelessWidget {
                   child: SizedBox(
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: onComplete,
+                      onPressed: isLoading ? null : onComplete,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primary,
                         shape: RoundedRectangleBorder(
                           borderRadius: AppRadius.mdAll,
                         ),
                       ),
-                      child: const Text(
-                        'Start Exploring',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textOnPrimary,
-                        ),
-                      ),
+                      child: isLoading
+                          ? const SizedBox(
+                              height: 24,
+                              width: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.textOnPrimary,
+                              ),
+                            )
+                          : const Text(
+                              'Start Exploring',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textOnPrimary,
+                              ),
+                            ),
                     ),
                   ),
                 ),

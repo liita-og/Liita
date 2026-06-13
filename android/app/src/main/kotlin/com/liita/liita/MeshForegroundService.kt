@@ -32,6 +32,10 @@ class MeshForegroundService : Service() {
         val SERVICE_UUID: UUID = UUID.fromString("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
         val PROFILE_CHAR_UUID: UUID = UUID.fromString("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
         const val TAG = "MeshForegroundService"
+        // RC-1: Minimum MTU we negotiate. 247 gives 244-byte writes (max for BLE 4.2/5.0).
+        const val TARGET_MTU = 247
+        // Safety timeout for each send task — prevents isSending deadlock if connectGatt hangs.
+        const val SEND_TIMEOUT_MS = 8000L
     }
 
     private val binder = LocalBinder()
@@ -138,6 +142,7 @@ class MeshForegroundService : Service() {
         if (!hasPermissions() || !isRunning) return
 
         dutyCycleJob?.cancel()
+        sendJob?.cancel()   // RC-3: Stop any in-flight send job
         bluetoothLeScanner?.stopScan(scanCallback)
         bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
         gattServer?.close()
@@ -146,8 +151,151 @@ class MeshForegroundService : Service() {
         connectingDevices.clear()
         writeQueue.clear()
         isWriting = false
+        sendQueue.clear()   // RC-3: Drain send queue on stop
 
         isRunning = false
+    }
+
+    // -------------------------------------------------------------------------
+    // RC-3 / RC-4: Serialized outbound send queue
+    //
+    // Instead of spawning a connectGatt for every peer simultaneously,
+    // we queue (device, payload) pairs and process them one at a time,
+    // fully chaining: connect → discoverServices → requestMtu →
+    // onMtuChanged → writeCharacteristic → onCharacteristicWrite → disconnect → close.
+    // -------------------------------------------------------------------------
+
+    private data class SendTask(val device: BluetoothDevice, val payloadBytes: ByteArray)
+    private val sendQueue = ConcurrentLinkedQueue<SendTask>()
+    @Volatile private var isSending = false
+    private var sendJob: Job? = null
+
+    @SuppressLint("MissingPermission")
+    private fun enqueueSendToAll(payloadBytes: ByteArray) {
+        val knownDevices = peerRegistry.getAllKnownDevices()
+        if (knownDevices.isEmpty()) {
+            Log.w(TAG, "[LiitaBLE] relayPacket: no known devices in registry")
+            return
+        }
+        for (device in knownDevices) {
+            sendQueue.add(SendTask(device, payloadBytes.copyOf()))
+        }
+        drainSendQueue()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun drainSendQueue() {
+        if (isSending) return
+        val task = sendQueue.poll() ?: return
+        if (!hasPermissions() || !isRunning) return
+        isSending = true
+
+        Log.d(TAG, "[LiitaBLE] drainSendQueue: connecting to ${task.device.address}")
+
+        // Safety timeout: if the GATT callback chain doesn't complete within
+        // SEND_TIMEOUT_MS, force-finish this task so the queue isn't permanently stuck.
+        sendJob?.cancel()
+        sendJob = scope.launch {
+            delay(SEND_TIMEOUT_MS)
+            if (isSending) {
+                Log.e(TAG, "[LiitaBLE] send timeout for ${task.device.address} — force-draining queue")
+                isSending = false
+                mainHandler.post { drainSendQueue() }
+            }
+        }
+
+        mainHandler.post {
+            if (hasPermissions()) {
+                task.device.connectGatt(this, false, buildSendCallback(task), BluetoothDevice.TRANSPORT_LE)
+            } else {
+                sendJob?.cancel()
+                isSending = false
+                drainSendQueue()
+            }
+        }
+    }
+
+    // RC-1 / RC-2: One callback instance per send task. Chains MTU → write → disconnect → close.
+    @SuppressLint("MissingPermission")
+    private fun buildSendCallback(task: SendTask): BluetoothGattCallback {
+        return object : BluetoothGattCallback() {
+            private var servicesDiscovered = false
+            private var mtuNegotiated = false
+            private var payloadWritten = false
+
+            private fun tryWrite(gatt: BluetoothGatt) {
+                if (servicesDiscovered && mtuNegotiated && !payloadWritten) {
+                    payloadWritten = true
+                    writePayload(gatt)
+                }
+            }
+
+            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
+                    Log.d(TAG, "[LiitaBLE] send-connect ok to ${task.device.address}, discovering services")
+                    if (hasPermissions()) gatt.discoverServices()
+                    else finishSend(gatt)
+                } else {
+                    Log.w(TAG, "[LiitaBLE] send-connect failed to ${task.device.address}: status=$status")
+                    finishSend(gatt)
+                }
+            }
+
+            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS && hasPermissions()) {
+                    servicesDiscovered = true
+                    // RC-1: Request MTU BEFORE writing.
+                    val requested = gatt.requestMtu(TARGET_MTU)
+                    Log.d(TAG, "[LiitaBLE] requestMtu($TARGET_MTU) for ${task.device.address}: dispatched=$requested")
+                    if (!requested) {
+                        Log.w(TAG, "[LiitaBLE] requestMtu returned false, proceeding to write")
+                        mtuNegotiated = true
+                        tryWrite(gatt)
+                    }
+                } else {
+                    Log.w(TAG, "[LiitaBLE] service discovery failed for ${task.device.address}: status=$status")
+                    finishSend(gatt)
+                }
+            }
+
+            override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+                Log.d(TAG, "[LiitaBLE] onMtuChanged for ${task.device.address}: mtu=$mtu status=$status")
+                mtuNegotiated = true
+                tryWrite(gatt)
+            }
+
+            private fun writePayload(gatt: BluetoothGatt) {
+                val service = gatt.getService(SERVICE_UUID)
+                val char = service?.getCharacteristic(PROFILE_CHAR_UUID)
+                if (char != null && hasPermissions()) {
+                    char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                    char.value = task.payloadBytes
+                    val ok = gatt.writeCharacteristic(char)
+                    Log.d(TAG, "[LiitaBLE] writeCharacteristic to ${task.device.address}: ok=$ok payload=${task.payloadBytes.size}B")
+                    if (!ok) finishSend(gatt)
+                } else {
+                    Log.w(TAG, "[LiitaBLE] service/char null on ${task.device.address}, skipping send")
+                    finishSend(gatt)
+                }
+            }
+
+            override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                Log.d(TAG, "[LiitaBLE] write complete to ${task.device.address}: status=$status")
+                finishSend(gatt)
+            }
+
+            private fun finishSend(gatt: BluetoothGatt) {
+                try {
+                    if (hasPermissions()) gatt.disconnect()
+                    gatt.close()
+                } catch (e: Exception) {
+                    Log.e(TAG, "[LiitaBLE] finishSend close error: ${e.message}")
+                }
+                sendJob?.cancel()  // Cancel the safety timeout — send completed normally
+                isSending = false
+                drainSendQueue()  // Process the next task in the queue
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -208,9 +356,15 @@ class MeshForegroundService : Service() {
 
     private fun handleIncomingGattWrite(value: ByteArray) {
         val base64Str = String(value, Charsets.UTF_8)
-        val jsonStr = Utils.decodeAndDecompress(base64Str) ?: return
-
-        val packet = MeshPacket.fromJson(jsonStr) ?: return
+        val jsonStr = Utils.decodeAndDecompress(base64Str) ?: run {
+            Log.e(TAG, "[LiitaBLE] handleIncomingGattWrite: Base64/GZip decode failed. " +
+                "Received ${value.size} bytes. Likely MTU truncation — check that sender negotiated MTU.")
+            return
+        }
+        val packet = MeshPacket.fromJson(jsonStr) ?: run {
+            Log.e(TAG, "[LiitaBLE] handleIncomingGattWrite: MeshPacket JSON parse failed. raw=$jsonStr")
+            return
+        }
 
         // Rule 1: Dedup cache check
         val degree = dedupCache.recordAndGetDegree(packet.packetId)
@@ -247,50 +401,10 @@ class MeshForegroundService : Service() {
     @SuppressLint("MissingPermission")
     private fun relayPacket(packet: MeshPacket) {
         if (!hasPermissions()) return
-
         val jsonStr = packet.toJson()
         val payloadStr = Utils.compressAndEncode(jsonStr)
         val payloadBytes = payloadStr.toByteArray(Charsets.UTF_8)
-
-        // Grab all known devices we've discovered, not just currently connected ones
-        val knownDevices = peerRegistry.getAllKnownDevices() 
-
-        for (device in knownDevices) {
-            // Spin up a temporary GATT client just for this packet transmission
-            device.connectGatt(this, false, object : BluetoothGattCallback() {
-                
-                override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-                    if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        Log.d("LiitaBLE", "[LiitaBLE] Ephemeral connect to ${device.address}")
-                        gatt.discoverServices()
-                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                        gatt.close()
-                    }
-                }
-
-                override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        val service = gatt.getService(SERVICE_UUID)
-                        val char = service?.getCharacteristic(PROFILE_CHAR_UUID)
-                        
-                        if (char != null) {
-                            char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                            char.value = payloadBytes
-                            gatt.writeCharacteristic(char)
-                        } else {
-                            gatt.disconnect()
-                        }
-                    } else {
-                        gatt.disconnect()
-                    }
-                }
-
-                override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-                    Log.d("LiitaBLE", "[LiitaBLE] Packet successfully fired to ${gatt.device.address}. Disconnecting.")
-                    gatt.disconnect()
-                }
-            })
-        }
+        enqueueSendToAll(payloadBytes)   // RC-1/2/3/4: serialized, MTU-aware, always closes
     }
 
     @SuppressLint("MissingPermission")

@@ -6,8 +6,9 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     
     <!-- Legacy BLE Permissions (Android 11 and below) -->
-    <uses-permission android:name="android.permission.BLUETOOTH" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <!-- RC-16: Constrain legacy permissions to API <= 30 to prevent system rejection on API 31+ -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

@@ -75,11 +75,11 @@ final activePeerCountProvider = StreamProvider<int>((ref) {
 // Matches
 // ---------------------------------------------------------------------------
 
-final matchesProvider = FutureProvider<List<String>>((ref) async {
+final matchesProvider = StreamProvider<List<String>>((ref) {
   final localProfile = ref.watch(localProfileProvider);
-  if (localProfile == null) return [];
+  if (localProfile == null) return const Stream.empty();
   final db = ref.watch(databaseServiceProvider);
-  return db.getMatches(localProfile.deviceId);
+  return db.watchMatches(localProfile.deviceId);
 });
 
 final matchProfileProvider =

@@ -6,6 +6,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:pointycastle/export.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:liita/core/utils/constants.dart';
+
 // ---------------------------------------------------------------------------
 // EncryptedPayload
 // ---------------------------------------------------------------------------
@@ -87,8 +89,6 @@ abstract class CryptoService {
 /// Production [CryptoService] backed by `pointycastle` for crypto primitives
 /// and `flutter_secure_storage` for key persistence.
 class CryptoServiceImpl implements CryptoService {
-  static const String _keyDeviceId = 'liita_device_id';
-  static const String _keyPrivateKey = 'liita_ec_private_key';
   static const String _sharedKeyPrefix = 'liita_shared_key_';
   static const String _curveName = 'prime256v1';
 
@@ -257,10 +257,10 @@ class CryptoServiceImpl implements CryptoService {
       ciphertextBytes,
       0,
     );
-    cipher.doFinal(ciphertextBytes, len);
+    final outLen = len + cipher.doFinal(ciphertextBytes, len);
 
     return EncryptedPayload(
-      ciphertext: base64Encode(ciphertextBytes),
+      ciphertext: base64Encode(ciphertextBytes.sublist(0, outLen)),
       nonce: base64Encode(nonce),
     );
   }
@@ -291,9 +291,9 @@ class CryptoServiceImpl implements CryptoService {
       plaintextBytes,
       0,
     );
-    cipher.doFinal(plaintextBytes, len);
+    final outLen = len + cipher.doFinal(plaintextBytes, len);
 
-    return utf8.decode(plaintextBytes);
+    return utf8.decode(plaintextBytes.sublist(0, outLen));
   }
 
   // -----------------------------------------------------------------------
@@ -321,11 +321,11 @@ class CryptoServiceImpl implements CryptoService {
 
   @override
   Future<String> getOrCreateDeviceId() async {
-    final existing = await _storage.read(key: _keyDeviceId);
+    final existing = await _storage.read(key: AppConstants.keyDeviceId);
     if (existing != null) return existing;
 
     final id = _uuid.v4();
-    await _storage.write(key: _keyDeviceId, value: id);
+    await _storage.write(key: AppConstants.keyDeviceId, value: id);
     return id;
   }
 
@@ -335,7 +335,7 @@ class CryptoServiceImpl implements CryptoService {
 
   @override
   Future<ECPrivateKey> getOrCreatePrivateKey() async {
-    final stored = await _storage.read(key: _keyPrivateKey);
+    final stored = await _storage.read(key: AppConstants.keyPrivateKey);
     if (stored != null) {
       return _decodePrivateKey(stored);
     }
@@ -343,7 +343,7 @@ class CryptoServiceImpl implements CryptoService {
     final keyPair = await generateKeyPair();
     final privateKey = keyPair.privateKey as ECPrivateKey;
     final encoded = _encodePrivateKey(privateKey);
-    await _storage.write(key: _keyPrivateKey, value: encoded);
+    await _storage.write(key: AppConstants.keyPrivateKey, value: encoded);
     return privateKey;
   }
 

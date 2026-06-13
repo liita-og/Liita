@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -13,6 +14,7 @@ import 'package:liita/core/services/database_service.dart';
 import 'package:liita/core/services/mesh_service.dart';
 import 'package:liita/core/services/crypto_service.dart';
 import 'package:liita/core/services/notification_service.dart';
+import 'package:liita/core/services/storage_service.dart';
 
 /// Central packet routing engine for the Liita BLE mesh network.
 ///
@@ -40,7 +42,20 @@ class AppController {
   bool _initialized = false;
 
   /// Called when a new match is created. UI layer sets this to update Riverpod state.
-  void Function(String peerId)? onMatchCreated;
+  void Function(String peerId)? _onMatchCreated;
+  final List<String> _pendingMatches = [];
+
+  set onMatchCreated(void Function(String peerId)? callback) {
+    _onMatchCreated = callback;
+    if (callback != null) {
+      for (final peerId in _pendingMatches) {
+        callback(peerId);
+      }
+      _pendingMatches.clear();
+    }
+  }
+
+  void Function(String peerId)? get onMatchCreated => _onMatchCreated;
 
   /// In-memory peer name cache to avoid DB lookups on every notification.
   final Map<String, String> _peerNameCache = {};
@@ -48,6 +63,9 @@ class AppController {
   /// Stream subscriptions to clean up on [dispose].
   StreamSubscription<MeshPacket>? _packetSub;
   StreamSubscription<UserProfile>? _peerSub;
+
+  final List<MeshPacket> _incomingQueue = [];
+  bool _isProcessingQueue = false;
 
   static const _uuid = Uuid();
 
@@ -74,11 +92,16 @@ class AppController {
     _initialized = true;
     _localDeviceId = localDeviceId;
 
-    // Subscribe to discovered peers for name cache
     _peerSub = _mesh.discoveredPeers.listen(_onPeerDiscovered);
-
-    // Subscribe to incoming packets — the core routing loop
-    _packetSub = _mesh.incomingPackets.listen(_onPacketReceived);
+    // RC-7: Handle stream errors to prevent silent subscription termination.
+    _packetSub = _mesh.incomingPackets.listen(
+      _enqueuePacket,
+      onError: (Object e, StackTrace st) {
+        debugPrint('AppController: incomingPackets stream error (subscription preserved): $e\n$st');
+        // Do NOT cancel — the stream error handler keeps the subscription alive.
+      },
+      cancelOnError: false,  // Critical: keep listening after errors
+    );
   }
 
   /// Tears down all subscriptions. Safe to call multiple times.
@@ -88,11 +111,32 @@ class AppController {
     _peerSub?.cancel();
     _peerSub = null;
     _peerNameCache.clear();
+    _incomingQueue.clear();
+    _isProcessingQueue = false;
   }
 
   // ===========================================================================
   // INBOUND ROUTING — THE CORE LOOP
   // ===========================================================================
+
+  void _enqueuePacket(MeshPacket packet) {
+    _incomingQueue.add(packet);
+    _processQueue();
+  }
+
+  Future<void> _processQueue() async {
+    if (_isProcessingQueue) return;
+    _isProcessingQueue = true;
+
+    try {
+      while (_incomingQueue.isNotEmpty) {
+        final packet = _incomingQueue.removeAt(0);
+        await _onPacketReceived(packet);
+      }
+    } finally {
+      _isProcessingQueue = false;
+    }
+  }
 
   /// Entry point for every incoming packet from the mesh.
   ///
@@ -105,11 +149,10 @@ class AppController {
       if (packet.originId == _localDeviceId) return;
 
       // ── CONTRACT 2: Dedup check FIRST ──
-      final alreadySeen = await _db.isPacketSeen(packet.packetId);
-      if (alreadySeen) return;
-
-      // Mark as seen immediately to prevent re-processing from relay loops
-      await _db.markPacketSeen(packet.packetId);
+      // RC-9: Use an atomic markIfUnseen that returns false if already recorded.
+      // This eliminates the TOCTOU window between isPacketSeen and markPacketSeen.
+      final isNew = await _db.markPacketSeenIfNew(packet.packetId);
+      if (!isNew) return;
 
       // Route to the correct handler based on payload type
       switch (packet.payloadType) {
@@ -156,8 +199,17 @@ class AppController {
     ));
 
     // Fire notification
-    final senderName = _getPeerName(packet.originId);
+    final senderName = await _getPeerName(packet.originId);
     await _notifications.showWaveNotification(senderName);
+
+    // Update wavedByProvider through a new callback if we have one, or just update state directly from UI.
+    // We will fire a general callback if needed, but since AppController doesn't have ref,
+    // we assume UI polling or stream handles it.
+
+    // Store their public key from the wave data field (needed for key exchange)
+    if (packet.data.isNotEmpty) {
+      await _storeRemotePublicKey(packet.originId, packet.data);
+    }
 
     // Check for mutual wave → auto-create match
     final weWavedFirst = await _db.hasWaveSent(_localDeviceId, packet.originId);
@@ -175,22 +227,22 @@ class AppController {
   Future<void> _handleWaveAccept(MeshPacket packet) async {
     if (await _db.isBlocked(_localDeviceId, packet.originId)) return;
 
-    // Record as a WAVE_RECEIVED from their side (they waved back)
+    // RC-14 FIX: Record as waveReceived — they waved (accepted) us.
     await _db.insertMatchEvent(MatchEvent(
       eventId: _uuid.v4(),
-      eventType: MatchEventType.waveSent,
+      eventType: MatchEventType.waveReceived,
       actorId: packet.originId,
       targetId: _localDeviceId,
       timestamp: DateTime.now().millisecondsSinceEpoch,
     ));
 
-    // Create the match
-    await _createMatch(packet.originId);
-
     // Extract and store their public key from the data field if present
     if (packet.data.isNotEmpty) {
       await _storeRemotePublicKey(packet.originId, packet.data);
     }
+
+    // Create the match
+    await _createMatch(packet.originId);
   }
 
   // ===========================================================================
@@ -234,7 +286,7 @@ class AppController {
 
     // Send ACK back to sender
     await _mesh.sendPacket(MeshPacket(
-      packetId: _uuid.v4(),
+      packetId: const Uuid().v4(),
       originId: _localDeviceId,
       destinationId: packet.originId,
       payloadType: PayloadType.ack,
@@ -243,7 +295,7 @@ class AppController {
     ));
 
     // Fire notification
-    final senderName = _getPeerName(packet.originId);
+    final senderName = await _getPeerName(packet.originId);
     final preview = plaintext.length > 40
         ? '${plaintext.substring(0, 40)}...'
         : plaintext;
@@ -299,9 +351,9 @@ class AppController {
       await _db.insertBroadcast(message);
     } catch (e) {
       // Fallback: treat data as raw text with basic metadata
-      final senderName = _getPeerName(packet.originId);
+      final senderName = await _getPeerName(packet.originId);
       await _db.insertBroadcast(BroadcastMessage(
-        messageId: _uuid.v4(),
+        messageId: const Uuid().v4(),
         fromId: packet.originId,
         senderName: senderName,
         seatNumber: '',
@@ -342,13 +394,14 @@ class AppController {
   /// The wave packet's data field contains the local user's public key
   /// (Base64) to enable key exchange on match creation.
   Future<void> sendWave(String targetId) async {
-    // Check if already waved
-    if (await _db.hasWaveSent(_localDeviceId, targetId)) return;
+    // RC-10: Log the suppressed re-wave so stale DB state is diagnosable.
+    if (await _db.hasWaveSent(_localDeviceId, targetId)) {
+      debugPrint('AppController.sendWave: suppressed duplicate wave to $targetId (already in DB)');
+      return;
+    }
 
-    // Check if blocked
     if (await _db.isBlocked(_localDeviceId, targetId)) return;
 
-    // Record outgoing wave
     await _db.insertMatchEvent(MatchEvent(
       eventId: _uuid.v4(),
       eventType: MatchEventType.waveSent,
@@ -357,21 +410,48 @@ class AppController {
       timestamp: DateTime.now().millisecondsSinceEpoch,
     ));
 
-    // Get public key for key exchange
-    String publicKeyBase64 = '';
+    // RC-11: If key export fails, abort the wave rather than sending an empty key.
+    // An empty key permanently breaks E2E encryption for this match.
+    String publicKeyBase64;
     try {
       final pubKey = await _crypto.getPublicKey();
       publicKeyBase64 = await _crypto.exportPublicKey(pubKey);
-    } catch (e) {
-      debugPrint('AppController: could not export public key: $e');
+    } catch (e, st) {
+      debugPrint('AppController.sendWave: key export failed — wave aborted: $e\n$st');
+      // Roll back the WAVE_SENT event we just inserted since the wave wasn't sent.
+      await _db.deleteMatchEvent(eventType: MatchEventType.waveSent, actorId: _localDeviceId, targetId: targetId);
+      return;
     }
 
     // Send wave packet
     await _mesh.sendPacket(MeshPacket(
-      packetId: _uuid.v4(),
+      packetId: const Uuid().v4(),
       originId: _localDeviceId,
       destinationId: targetId,
       payloadType: PayloadType.wave,
+      data: publicKeyBase64,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+    ));
+
+    // Race-condition fix: if they already waved at us before this wave was
+    // recorded, send a waveAccept immediately so their device can create the
+    // match without waiting for another round-trip.
+    final theyAlreadyWaved = await _db.hasWaveFrom(targetId, _localDeviceId);
+    if (theyAlreadyWaved) {
+      debugPrint('AppController.sendWave: mutual wave detected, sending waveAccept to $targetId');
+      await _sendWaveAccept(targetId, publicKeyBase64);
+      await _createMatch(targetId);
+    }
+  }
+
+  /// Sends a waveAccept packet to [targetId], carrying our public key.
+  /// Called when a mutual wave is detected at send-time (race-condition fix).
+  Future<void> _sendWaveAccept(String targetId, String publicKeyBase64) async {
+    await _mesh.sendPacket(MeshPacket(
+      packetId: const Uuid().v4(),
+      originId: _localDeviceId,
+      destinationId: targetId,
+      payloadType: PayloadType.waveAccept,
       data: publicKeyBase64,
       timestamp: DateTime.now().millisecondsSinceEpoch,
     ));
@@ -429,7 +509,7 @@ class AppController {
   /// Sends a broadcast message to the Lounge (destination = '*').
   Future<void> sendBroadcast(String text, UserProfile localProfile) async {
     final message = BroadcastMessage(
-      messageId: _uuid.v4(),
+      messageId: const Uuid().v4(),
       fromId: _localDeviceId,
       senderName: localProfile.name,
       seatNumber: localProfile.seatNumber,
@@ -442,7 +522,7 @@ class AppController {
 
     // Send over mesh
     await _mesh.sendPacket(MeshPacket(
-      packetId: _uuid.v4(),
+      packetId: const Uuid().v4(),
       originId: _localDeviceId,
       destinationId: '*',
       payloadType: PayloadType.broadcast,
@@ -454,7 +534,7 @@ class AppController {
   /// Blocks a peer. Inserts a BLOCKED event and prevents further interaction.
   Future<void> blockPeer(String peerId) async {
     await _db.insertMatchEvent(MatchEvent(
-      eventId: _uuid.v4(),
+      eventId: const Uuid().v4(),
       eventType: MatchEventType.blocked,
       actorId: _localDeviceId,
       targetId: peerId,
@@ -465,7 +545,7 @@ class AppController {
   /// Reports a peer. Inserts a REPORTED event (also blocks).
   Future<void> reportPeer(String peerId) async {
     await _db.insertMatchEvent(MatchEvent(
-      eventId: _uuid.v4(),
+      eventId: const Uuid().v4(),
       eventType: MatchEventType.reported,
       actorId: _localDeviceId,
       targetId: peerId,
@@ -485,9 +565,13 @@ class AppController {
   Future<void> _createMatch(String peerId) async {
     final matchId = ChatMessage.deriveMatchId(_localDeviceId, peerId);
 
+    // Guard: don't create a duplicate match
+    final existingMatch = await _db.hasMatchCreated(_localDeviceId, peerId);
+    if (existingMatch) return;
+
     // Record MATCH_CREATED for both sides
     await _db.insertMatchEvent(MatchEvent(
-      eventId: _uuid.v4(),
+      eventId: const Uuid().v4(),
       eventType: MatchEventType.matchCreated,
       actorId: _localDeviceId,
       targetId: peerId,
@@ -497,10 +581,22 @@ class AppController {
     // Attempt key derivation if we have the remote public key
     await _deriveAndStoreSharedKey(peerId, matchId);
 
+    // Notify the matches stream so matchesProvider updates live.
+    _db.notifyMatchesChanged(_localDeviceId);
+
     // Fire match notification
-    final peerName = _getPeerName(peerId);
+    final peerName = await _getPeerName(peerId);
     await _notifications.showMatchNotification(peerName);
-    onMatchCreated?.call(peerId);
+    
+    if (_onMatchCreated == null) {
+      debugPrint('[AppController] WARNING: onMatchCreated is null at match creation time. Queueing peerId: $peerId');
+      _pendingMatches.add(peerId);
+    } else {
+      _onMatchCreated?.call(peerId);
+    }
+
+    // Send our photo to the new match in chunks
+    _sendPhotoChunks(peerId);
   }
 
   /// Stores a remote peer's public key from a wave/waveAccept data field.
@@ -552,10 +648,62 @@ class AppController {
     });
   }
 
-  /// Returns the cached peer name, or a truncated device ID as fallback.
-  String _getPeerName(String deviceId) {
-    return _peerNameCache[deviceId] ??
-        'Traveler ${deviceId.substring(0, 6)}';
+  /// Returns the cached peer name, or "Someone" as fallback if missing.
+  Future<String> _getPeerName(String deviceId) async {
+    if (_peerNameCache.containsKey(deviceId)) {
+      return _peerNameCache[deviceId]!;
+    }
+    final profile = await _db.getProfile(deviceId);
+    if (profile != null && profile.name.isNotEmpty) {
+      _peerNameCache[deviceId] = profile.name;
+      return profile.name;
+    }
+    return 'Someone';
+  }
+
+  /// Slices the local profile photo into small chunks and transmits them to [targetId].
+  Future<void> _sendPhotoChunks(String targetId) async {
+    try {
+      final profile = await StorageService.instance.loadProfile();
+      if (profile == null || profile.photoHash == null) return;
+      
+      final file = File(profile.photoHash!);
+      if (!file.existsSync()) return;
+
+      final bytes = await file.readAsBytes();
+      final base64Photo = base64Encode(bytes);
+      
+      final chunkSize = 200;
+      final totalChunks = (base64Photo.length / chunkSize).ceil();
+      
+      for (int i = 0; i < totalChunks; i++) {
+        final start = i * chunkSize;
+        final end = (start + chunkSize < base64Photo.length) 
+            ? start + chunkSize 
+            : base64Photo.length;
+        final chunkData = base64Photo.substring(start, end);
+        
+        final payload = {
+          'photoHash': profile.photoHash,
+          'chunkIndex': i,
+          'totalChunks': totalChunks,
+          'data': chunkData,
+        };
+
+        await _mesh.sendPacket(MeshPacket(
+          packetId: const Uuid().v4(),
+          originId: _localDeviceId,
+          destinationId: targetId,
+          payloadType: PayloadType.photoChunk,
+          data: jsonEncode(payload),
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+        ));
+        
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+    } catch (e) {
+      debugPrint('AppController: failed to send photo chunks: $e');
+    }
   }
 
   /// Prunes stale dedup entries and photo chunks. Should be called

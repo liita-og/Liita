@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/models/user_profile.dart';
 import 'package:liita/core/providers/providers.dart';
 import 'package:liita/core/widgets/avatar_widget.dart';
-
-final wavedPeersProvider = StateProvider<Set<String>>((ref) => {});
 
 /// Passenger discovery — stacked card deck (Figma design).
 class RadarScreen extends ConsumerStatefulWidget {
@@ -124,7 +123,7 @@ class _RadarScreenState extends ConsumerState<RadarScreen> {
   Future<void> _sendWave(UserProfile peer, UserProfile? local) async {
     if (local == null) return;
     await ref.read(appControllerProvider).sendWave(peer.deviceId);
-    ref.read(wavedPeersProvider.notifier)
+    ref.read(wavedAtProvider.notifier)
         .update((state) => {...state, peer.deviceId});
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -209,15 +208,14 @@ class _StackCard extends StatelessWidget {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOutCubic,
-      transform: Matrix4.identity()
-        ..translate(0.0, translateY)
-        ..scale(scale),
+      transform: Matrix4.translationValues(0.0, translateY, 0.0)
+        ..multiply(Matrix4.diagonal3Values(scale, scale, 1.0)),
       transformAlignment: Alignment.topCenter,
       child: Opacity(
         opacity: opacity,
         child: Container(
           width: double.infinity,
-          height: 380,
+          height: 440,
           decoration: BoxDecoration(
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(20),
@@ -247,8 +245,15 @@ class _FrontCardContent extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final wavedPeers = ref.watch(wavedPeersProvider);
+    final wavedPeers = ref.watch(wavedAtProvider);
     final hasWaved = wavedPeers.contains(peer.deviceId);
+    
+    final wavedByPeers = ref.watch(wavedByProvider);
+    final isWavedBy = wavedByPeers.contains(peer.deviceId);
+    
+    // Check if this peer is already a connection.
+    final matchesAsync = ref.watch(matchesProvider);
+    final isMatched = matchesAsync.whenOrNull(data: (ids) => ids.contains(peer.deviceId)) ?? false;
 
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -256,56 +261,52 @@ class _FrontCardContent extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Avatar + info ──
-          Row(
-            children: [
-              AvatarWidget(profile: peer, size: 56),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          Center(
+            child: Column(
+              children: [
+                AvatarWidget(profile: peer, size: 80, showWaveBadge: isWavedBy),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            peer.name,
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w500,
-                              letterSpacing: -0.3,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                    Flexible(
+                      child: Text(
+                        peer.name,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.3,
                         ),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 6),
-                          child: Text('·',
-                              style: TextStyle(
-                                  color: AppColors.textTertiary,
-                                  fontSize: 13)),
-                        ),
-                        Text(
-                          peer.seatNumber,
-                          style: const TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                    const SizedBox(height: 2),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: Text('·',
+                          style: TextStyle(
+                              color: AppColors.textTertiary,
+                              fontSize: 16)),
+                    ),
                     Text(
-                      peer.occupation,
+                      peer.seatNumber,
                       style: const TextStyle(
-                        color: AppColors.textTertiary,
-                        fontSize: 14,
+                        color: AppColors.textSecondary,
+                        fontSize: 16,
                       ),
                     ),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+                Text(
+                  peer.occupation,
+                  style: const TextStyle(
+                    color: AppColors.textTertiary,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
           ),
 
           const Spacer(),
@@ -356,7 +357,7 @@ class _FrontCardContent extends ConsumerWidget {
                     ),
                     alignment: Alignment.center,
                     child: const Text(
-                      'Skip',
+                      'Next',
                       style: TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 14,
@@ -367,28 +368,52 @@ class _FrontCardContent extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: GestureDetector(
-                  onTap: hasWaved ? null : onWave,
-                  child: Container(
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: hasWaved ? AppColors.surface : AppColors.primary,
-                      borderRadius: BorderRadius.circular(12),
+              if (isMatched)
+                Expanded(
+                  flex: 2,
+                  child: GestureDetector(
+                    onTap: () => context.go('/matches'),
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      alignment: Alignment.center,
+                      child: const Text(
+                        'Message',
+                        style: TextStyle(
+                          color: AppColors.textOnPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                     ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      hasWaved ? 'Wave Sent' : 'Wave',
-                      style: TextStyle(
-                        color: hasWaved ? AppColors.textTertiary : AppColors.textOnPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
+                  ),
+                )
+              else
+                Expanded(
+                  flex: 2,
+                  child: GestureDetector(
+                    onTap: hasWaved ? null : onWave,
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: hasWaved ? AppColors.surface : AppColors.primary,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        hasWaved ? 'Wave Sent' : 'Wave',
+                        style: TextStyle(
+                          color: hasWaved ? AppColors.textTertiary : AppColors.textOnPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
         ],

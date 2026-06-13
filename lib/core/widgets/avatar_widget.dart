@@ -27,9 +27,12 @@ class AvatarWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final displayName = profile?.name ?? name ?? '?';
-    final initials = _initials(displayName);
-    final colorIndex = displayName.codeUnitAt(0) % AppColors.avatarColors.length;
+    final safeName = displayName.trim().isEmpty ? '?' : displayName;
+    final initials = _initials(safeName);
+    final colorIndex = safeName.codeUnitAt(0) % AppColors.avatarColors.length;
     final bgColor = AppColors.avatarColors[colorIndex];
+
+    final resolvedPhotoPath = photoPath ?? profile?.photoHash;
 
     return GestureDetector(
       onTap: onTap,
@@ -47,10 +50,10 @@ class AvatarWidget extends StatelessWidget {
                 width: 1,
               ),
             ),
-            child: (photoPath ?? profile?.photoHash) != null
+            child: resolvedPhotoPath != null && resolvedPhotoPath.isNotEmpty
                 ? ClipOval(
                     child: Image.file(
-                      File((photoPath ?? profile?.photoHash)!),
+                      File(resolvedPhotoPath),
                       width: size,
                       height: size,
                       fit: BoxFit.cover,
@@ -70,6 +73,24 @@ class AvatarWidget extends StatelessWidget {
                   shape: BoxShape.circle,
                   color: AppColors.textSecondary,
                   border: Border.all(color: AppColors.background, width: 1.5),
+                ),
+              ),
+            ),
+          if (showWaveBadge)
+            Positioned(
+              right: -4,
+              top: -4,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.background, width: 2),
+                ),
+                child: Icon(
+                  Icons.waving_hand_rounded,
+                  color: AppColors.textOnPrimary,
+                  size: size * 0.25,
                 ),
               ),
             ),

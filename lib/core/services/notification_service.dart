@@ -81,8 +81,8 @@ class NotificationService {
     HapticFeedback.heavyImpact();
 
     await _showNotification(
-      title: 'It\'s a match!',
-      body: 'You and $peerName are connected',
+      title: "You're connected!",
+      body: 'You and $peerName are now connected',
     );
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:go_router/go_router.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/providers/providers.dart';
@@ -32,10 +33,19 @@ class _HomeShellState extends ConsumerState<HomeShell>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final localProfile = ref.read(localProfileProvider);
       if (localProfile != null) {
-        ref.read(appControllerProvider).initialize(localProfile.deviceId);
+        FlutterBluePlus.adapterState.listen((state) {
+          if (state == BluetoothAdapterState.off) {
+            try {
+              FlutterBluePlus.turnOn();
+            } catch (_) {}
+          } else if (state == BluetoothAdapterState.on) {
+            ref.read(meshServiceProvider).startMesh(localProfile);
+            ref.read(appControllerProvider).initialize(localProfile.deviceId);
+          }
+        });
+
         ref.read(appControllerProvider).onMatchCreated = (peerId) {
           ref.read(newMatchProvider.notifier).state = peerId;
-          ref.invalidate(matchesProvider);
         };
       }
     });
@@ -66,6 +76,24 @@ class _HomeShellState extends ConsumerState<HomeShell>
     final location = GoRouterState.of(context).uri.path;
     final currentIndex = _tabs.indexWhere((t) => location.startsWith(t));
     final selectedIndex = currentIndex >= 0 ? currentIndex : 0;
+
+    ref.listen<String?>(newMatchProvider, (previous, next) {
+      if (next != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "You're connected!",
+              style: TextStyle(color: AppColors.textOnPrimary, fontWeight: FontWeight.bold),
+            ),
+            backgroundColor: AppColors.primary,
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        // Reset provider so we don't repeatedly trigger
+        Future.microtask(() => ref.read(newMatchProvider.notifier).state = null);
+      }
+    });
 
     return Scaffold(
       backgroundColor: AppColors.background,

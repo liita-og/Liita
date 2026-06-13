@@ -13,6 +13,16 @@ struct MeshPacket: Codable {
         return destinationId == "*"
     }
 
+    enum CodingKeys: String, CodingKey {
+        case packetId = "p"
+        case originId = "o"
+        case destinationId = "d"
+        case ttl = "l"
+        case payloadType = "y"
+        case data = "a"
+        case timestamp = "t"
+    }
+
     func toJsonString() -> String? {
         let encoder = JSONEncoder()
         guard let data = try? encoder.encode(self) else { return nil }

@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/models/chat_message.dart';
-import 'package:liita/core/models/mesh_packet.dart';
 import 'package:liita/core/providers/providers.dart';
 
 /// Premium 1-on-1 chat screen with gradient bubbles & glassmorphic input.
@@ -46,37 +44,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
 
-    final localProfile = ref.read(localProfileProvider);
-    if (localProfile == null) return;
-
-    final parts = widget.matchId.split(':');
-    final toId = parts.firstWhere(
-      (id) => id != localProfile.deviceId,
-      orElse: () => parts.last,
-    );
-
-    final message = ChatMessage(
-      messageId: const Uuid().v4(),
-      matchId: widget.matchId,
-      fromId: localProfile.deviceId,
-      toId: toId,
-      ciphertext: text,
-      nonce: '',
-      timestamp: DateTime.now().millisecondsSinceEpoch,
-    );
-
-    ref.read(databaseServiceProvider).insertMessage(message);
-
-    ref.read(meshServiceProvider).sendPacket(
-      MeshPacket(
-        packetId: const Uuid().v4(),
-        originId: localProfile.deviceId,
-        destinationId: toId,
-        payloadType: PayloadType.text,
-        data: text,
-        timestamp: DateTime.now().millisecondsSinceEpoch,
-      ),
-    );
+    ref.read(appControllerProvider).sendMessage(widget.matchId, text);
 
     _controller.clear();
     _scrollToBottom();

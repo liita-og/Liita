@@ -19,22 +19,22 @@ class BroadcastMessage {
   });
 
   Map<String, dynamic> toJson() => {
-    'messageId': messageId,
-    'fromId': fromId,
-    'senderName': senderName,
-    'seatNumber': seatNumber,
-    'text': text,
-    'timestamp': timestamp,
+    'm': messageId,
+    'f': fromId,
+    'n': senderName,
+    's': seatNumber,
+    'x': text,
+    't': timestamp,
   };
 
   factory BroadcastMessage.fromJson(Map<String, dynamic> json) =>
       BroadcastMessage(
-        messageId: json['messageId'] as String,
-        fromId: json['fromId'] as String,
-        senderName: json['senderName'] as String,
-        seatNumber: json['seatNumber'] as String,
-        text: json['text'] as String,
-        timestamp: json['timestamp'] as int,
+        messageId: json['m'] as String,
+        fromId: json['f'] as String,
+        senderName: json['n'] as String,
+        seatNumber: json['s'] as String,
+        text: json['x'] as String,
+        timestamp: json['t'] as int,
       );
 
   /// SQLite storage format (snake_case).
