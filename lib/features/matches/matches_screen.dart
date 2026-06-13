@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/providers/providers.dart';
+import 'package:liita/core/providers/game_provider.dart';
+import 'package:liita/core/models/game_message.dart';
 import 'package:liita/core/widgets/avatar_widget.dart';
 
 class MatchesScreen extends ConsumerWidget {
@@ -168,6 +171,18 @@ class _MatchTile extends ConsumerWidget {
                     ],
                   ),
                 ),
+                // ── Action buttons ───────────────────────────────────────
+                IconButton(
+                  icon: const Icon(Icons.sports_esports_outlined, color: AppColors.textSecondary),
+                  tooltip: 'Play a game',
+                  onPressed: () => _showGamePicker(context, ref, peerId, profile.name),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chat_bubble_outline_rounded, color: AppColors.primary),
+                  onPressed: () => context.push(
+                    '/chat/$matchId?name=${Uri.encodeComponent(profile.name)}',
+                  ),
+                ),
               ],
             ),
           ),
@@ -187,5 +202,132 @@ class _MatchTile extends ConsumerWidget {
   String _deriveMatchId(String a, String b) {
     final sorted = [a, b]..sort();
     return sorted.join(':');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Game-picker bottom sheet (shown when the game icon is tapped in MatchTile)
+// ---------------------------------------------------------------------------
+
+void _showGamePicker(
+  BuildContext context,
+  WidgetRef ref,
+  String peerId,
+  String peerName,
+) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => _GamePickerSheet(peerId: peerId, peerName: peerName, ref: ref),
+  );
+}
+
+class _GameEntry {
+  final String title;
+  final IconData icon;
+  final bool available;
+  const _GameEntry(this.title, this.icon, {this.available = false});
+}
+
+const _availableGames = [
+  _GameEntry('Tic-Tac-Toe', Icons.grid_3x3_rounded, available: true),
+  _GameEntry('Trivia', Icons.help_outline_rounded),
+  _GameEntry('Word Chain', Icons.link_rounded),
+  _GameEntry('Chess', Icons.sports_esports_outlined),
+  _GameEntry('Battleship', Icons.radar_rounded),
+];
+
+class _GamePickerSheet extends StatelessWidget {
+  final String peerId;
+  final String peerName;
+  final WidgetRef ref;
+
+  const _GamePickerSheet({
+    required this.peerId,
+    required this.peerName,
+    required this.ref,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 4),
+            child: Text(
+              'Play with $peerName',
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 12),
+            child: Text(
+              'Choose a game',
+              style: TextStyle(color: AppColors.textTertiary, fontSize: 13),
+            ),
+          ),
+          ...List.generate(_availableGames.length, (i) {
+            final g = _availableGames[i];
+            return ListTile(
+              leading: Icon(
+                g.icon,
+                color: g.available ? AppColors.primary : AppColors.textTertiary,
+              ),
+              title: Text(
+                g.title,
+                style: TextStyle(
+                  color: g.available ? AppColors.textPrimary : AppColors.textSecondary,
+                  fontSize: 15,
+                ),
+              ),
+              trailing: g.available
+                  ? const Icon(Icons.chevron_right_rounded, color: AppColors.primary)
+                  : Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceLight,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'Coming Soon',
+                        style: TextStyle(
+                          color: AppColors.textTertiary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+              onTap: g.available
+                  ? () {
+                      Navigator.pop(context);
+                      final gameId = const Uuid().v4();
+                      ref.read(appControllerProvider).sendGameMessage(
+                        peerId,
+                        GameMessage(
+                          gameId: gameId,
+                          type: GameMessageType.invite,
+                          payload: {},
+                        ),
+                      );
+                      ref.read(ticTacToeProvider.notifier).startGame(peerId, peerName, gameId);
+                      context.push('/games/tictactoe');
+                    }
+                  : null,
+            );
+          }),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
   }
 }

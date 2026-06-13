@@ -36,10 +36,11 @@ final cryptoServiceProvider = Provider<CryptoService>((ref) {
 
 final appControllerProvider = Provider<AppController>((ref) {
   final controller = AppController(
-    db: ref.watch(databaseServiceProvider),
-    mesh: ref.watch(meshServiceProvider),
-    crypto: ref.watch(cryptoServiceProvider),
-    notifications: ref.watch(notificationServiceProvider),
+    db: ref.read(databaseServiceProvider),
+    mesh: ref.read(meshServiceProvider),
+    crypto: ref.read(cryptoServiceProvider),
+    notifications: ref.read(notificationServiceProvider),
+    ref: ref,
   );
   ref.onDispose(controller.dispose);
   return controller;

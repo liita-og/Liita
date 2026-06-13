@@ -16,6 +16,11 @@ import 'package:liita/core/services/crypto_service.dart';
 import 'package:liita/core/services/notification_service.dart';
 import 'package:liita/core/services/storage_service.dart';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'package:liita/core/models/game_message.dart';
+import 'package:liita/core/providers/game_provider.dart';
+
 /// Central packet routing engine for the Liita BLE mesh network.
 ///
 /// Subscribes to [MeshService.incomingPackets], applies dedup-first processing,
@@ -35,6 +40,7 @@ class AppController {
   final MeshService _mesh;
   final CryptoService _crypto;
   final NotificationService _notifications;
+  final Ref _ref;
 
   /// The local device's unique ID. Set once on [initialize].
   String _localDeviceId = '';
@@ -74,10 +80,12 @@ class AppController {
     required MeshService mesh,
     required CryptoService crypto,
     required NotificationService notifications,
+    required Ref ref,
   })  : _db = db,
         _mesh = mesh,
         _crypto = crypto,
-        _notifications = notifications;
+        _notifications = notifications,
+        _ref = ref;
 
   // ===========================================================================
   // LIFECYCLE
@@ -376,17 +384,71 @@ class AppController {
   }
 
   // ===========================================================================
-  // HANDLER: GAME (Phase 2 placeholder)
+  // HANDLER: GAME (Phase 2 placeholder -> Implemented for TicTacToe)
   // ===========================================================================
 
-  /// Placeholder for game packet routing. Will be implemented in Phase 2.
-  void _handleGame(MeshPacket packet) {
-    debugPrint('AppController: game packet received (not yet implemented)');
+  /// Routes incoming game packets to the respective providers.
+  Future<void> _handleGame(MeshPacket packet) async {
+    try {
+      final gm = GameMessage.fromJson(jsonDecode(packet.data));
+      final notifier = _ref.read(ticTacToeProvider.notifier);
+
+      switch (gm.type) {
+        case GameMessageType.invite:
+          // If already in a game, auto-decline (busy).
+          if (_ref.read(ticTacToeProvider) != null) {
+            await sendGameMessage(
+              packet.originId,
+              GameMessage(
+                gameId: gm.gameId,
+                type: GameMessageType.decline,
+                payload: {'reason': 'busy'},
+              ),
+            );
+            break;
+          }
+          _ref.read(pendingGameInviteProvider.notifier).state = PendingGameInvite(
+            gameId: gm.gameId,
+            peerId: packet.originId,
+            peerName: await _getPeerName(packet.originId),
+          );
+          break;
+        case GameMessageType.accept:
+          notifier.onInviteAccepted(
+            gm.gameId, 
+            packet.originId,
+            await _getPeerName(packet.originId)
+          );
+          break;
+        case GameMessageType.decline:
+          notifier.reset();
+          break;
+        case GameMessageType.move:
+          notifier.onMoveReceived(gm.payload['index'] as int);
+          break;
+        case GameMessageType.end:
+          notifier.reset();
+          break;
+      }
+    } catch (e) {
+      debugPrint('[AppController] _handleGame error: $e');
+    }
   }
 
   // ===========================================================================
   // OUTBOUND ACTIONS (called by UI)
   // ===========================================================================
+
+  Future<void> sendGameMessage(String peerId, GameMessage gm) async {
+    await _mesh.sendPacket(MeshPacket(
+      packetId: const Uuid().v4(),
+      originId: _localDeviceId,
+      destinationId: peerId,
+      payloadType: PayloadType.game,
+      data: jsonEncode(gm.toJson()),
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+    ));
+  }
 
   /// Sends a wave to [targetId]. Records a WAVE_SENT event and transmits
   /// the wave packet over the mesh.

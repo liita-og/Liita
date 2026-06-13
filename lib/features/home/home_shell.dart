@@ -4,6 +4,8 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:go_router/go_router.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/providers/providers.dart';
+import 'package:liita/core/providers/game_provider.dart';
+import 'package:liita/core/models/game_message.dart';
 
 /// Main app shell with floating pill tab bar — no labels, dot indicator.
 class HomeShell extends ConsumerStatefulWidget {
@@ -92,6 +94,105 @@ class _HomeShellState extends ConsumerState<HomeShell>
         );
         // Reset provider so we don't repeatedly trigger
         Future.microtask(() => ref.read(newMatchProvider.notifier).state = null);
+      }
+    });
+
+    ref.listen<PendingGameInvite?>(pendingGameInviteProvider, (previous, next) {
+      if (next != null) {
+        showModalBottomSheet(
+          context: context,
+          backgroundColor: AppColors.surface,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          builder: (context) {
+            bool responded = false;
+            Future.delayed(const Duration(seconds: 30), () {
+              if (context.mounted && !responded && Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+            });
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${next.peerName} wants to play Tic Tac Toe',
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            responded = true;
+                            Navigator.pop(context);
+                            ref.read(appControllerProvider).sendGameMessage(
+                              next.peerId,
+                              GameMessage(
+                                gameId: next.gameId,
+                                type: GameMessageType.decline,
+                                payload: {},
+                              ),
+                            );
+                            ref.read(pendingGameInviteProvider.notifier).state = null;
+                          },
+                          child: const Text(
+                            'Decline',
+                            style: TextStyle(color: AppColors.textTertiary, fontSize: 16),
+                          ),
+                        ),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                          ),
+                          onPressed: () {
+                            responded = true;
+                            Navigator.pop(context);
+                            ref.read(appControllerProvider).sendGameMessage(
+                              next.peerId,
+                              GameMessage(
+                                gameId: next.gameId,
+                                type: GameMessageType.accept,
+                                payload: {},
+                              ),
+                            );
+                            ref.read(ticTacToeProvider.notifier).onInviteAccepted(
+                              next.gameId,
+                              next.peerId,
+                              next.peerName,
+                            );
+                            ref.read(pendingGameInviteProvider.notifier).state = null;
+                            context.push('/games/tictactoe');
+                          },
+                          child: const Text(
+                            'Accept',
+                            style: TextStyle(color: AppColors.textOnPrimary, fontSize: 16),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ).whenComplete(() {
+          // If dismissed by swiping down, we just clear the state. We don't send decline to save bandwidth or let it timeout.
+          // Or we can send decline. Let's just clear the state.
+          ref.read(pendingGameInviteProvider.notifier).state = null;
+        });
       }
     });
 
