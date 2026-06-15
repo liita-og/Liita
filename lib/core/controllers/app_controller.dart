@@ -179,7 +179,7 @@ class AppController {
         case PayloadType.ack:
           await _handleAck(packet);
         case PayloadType.game:
-          _handleGame(packet);
+          await _handleGame(packet);
       }
     } catch (e, st) {
       debugPrint('AppController: error processing packet ${packet.packetId}: $e');
@@ -387,51 +387,166 @@ class AppController {
   // HANDLER: GAME (Phase 2 placeholder -> Implemented for TicTacToe)
   // ===========================================================================
 
-  /// Routes incoming game packets to the respective providers.
+  /// Routes incoming game packets to the correct game handler by gameType.
   Future<void> _handleGame(MeshPacket packet) async {
     try {
       final gm = GameMessage.fromJson(jsonDecode(packet.data));
-      final notifier = _ref.read(ticTacToeProvider.notifier);
-
-      switch (gm.type) {
-        case GameMessageType.invite:
-          // If already in a game, auto-decline (busy).
-          if (_ref.read(ticTacToeProvider) != null) {
-            await sendGameMessage(
-              packet.originId,
-              GameMessage(
-                gameId: gm.gameId,
-                type: GameMessageType.decline,
-                payload: {'reason': 'busy'},
-              ),
-            );
-            break;
-          }
-          _ref.read(pendingGameInviteProvider.notifier).state = PendingGameInvite(
-            gameId: gm.gameId,
-            peerId: packet.originId,
-            peerName: await _getPeerName(packet.originId),
-          );
-          break;
-        case GameMessageType.accept:
-          notifier.onInviteAccepted(
-            gm.gameId, 
-            packet.originId,
-            await _getPeerName(packet.originId)
-          );
-          break;
-        case GameMessageType.decline:
-          notifier.reset();
-          break;
-        case GameMessageType.move:
-          notifier.onMoveReceived(gm.payload['index'] as int);
-          break;
-        case GameMessageType.end:
-          notifier.reset();
+      switch (gm.gameType) {
+        case GameType.ticTacToe:
+          await _handleTicTacToe(gm, packet.originId);
+        case GameType.trivia:
+          await _handleTrivia(gm, packet.originId);
           break;
       }
     } catch (e) {
       debugPrint('[AppController] _handleGame error: $e');
+    }
+  }
+
+  /// Handles all Tic-Tac-Toe game messages.
+  Future<void> _handleTicTacToe(GameMessage gm, String originId) async {
+    final notifier = _ref.read(ticTacToeProvider.notifier);
+
+    switch (gm.type) {
+      case GameMessageType.invite:
+        // If already in a game, auto-decline (busy).
+        if (_ref.read(ticTacToeProvider) != null) {
+          await sendGameMessage(
+            originId,
+            GameMessage(
+              gameId: gm.gameId,
+              gameType: GameType.ticTacToe,
+              type: GameMessageType.decline,
+              payload: {'reason': 'busy'},
+            ),
+          );
+          break;
+        }
+        _ref.read(pendingGameInviteProvider.notifier).state = PendingGameInvite(
+          gameId: gm.gameId,
+          gameType: GameType.ticTacToe,
+          peerId: originId,
+          peerName: await _getPeerName(originId),
+        );
+        break;
+      case GameMessageType.accept:
+        notifier.onInviteAccepted(
+          gm.gameId,
+          originId,
+          await _getPeerName(originId),
+        );
+        break;
+      case GameMessageType.decline:
+        notifier.reset();
+        break;
+      case GameMessageType.move:
+        notifier.onMoveReceived(gm.payload['index'] as int);
+        break;
+      case GameMessageType.end:
+        notifier.reset();
+        break;
+      case GameMessageType.question:
+      case GameMessageType.answer:
+      case GameMessageType.result:
+        break; // Not used by Tic-Tac-Toe.
+    }
+  }
+
+  /// Handles all Cabin Trivia game messages.
+  Future<void> _handleTrivia(GameMessage gm, String originId) async {
+    final notifier = _ref.read(triviaGameProvider.notifier);
+
+    switch (gm.type) {
+      case GameMessageType.invite:
+        // If already in a trivia game, auto-decline.
+        if (_ref.read(triviaGameProvider) != null) {
+          await sendGameMessage(
+            originId,
+            GameMessage(
+              gameId: gm.gameId,
+              gameType: GameType.trivia,
+              type: GameMessageType.decline,
+              payload: {'reason': 'busy'},
+            ),
+          );
+          break;
+        }
+        _ref.read(pendingGameInviteProvider.notifier).state = PendingGameInvite(
+          gameId: gm.gameId,
+          gameType: GameType.trivia,
+          peerId: originId,
+          peerName: await _getPeerName(originId),
+        );
+        break;
+
+      case GameMessageType.accept:
+        // HOST receives this — transition to answering and send first question.
+        final firstQuestion = notifier.onAcceptReceived();
+        if (firstQuestion != null) {
+          await sendGameMessage(
+            originId,
+            GameMessage(
+              gameId: gm.gameId,
+              gameType: GameType.trivia,
+              type: GameMessageType.question,
+              payload: {
+                'question': firstQuestion,
+                'index': 0,
+              },
+            ),
+          );
+        }
+        break;
+
+      case GameMessageType.decline:
+        notifier.reset();
+        break;
+
+      case GameMessageType.question:
+        // OPPONENT receives this.
+        final question = Map<String, dynamic>.from(
+            gm.payload['question'] as Map<String, dynamic>);
+        final index = gm.payload['index'] as int;
+        notifier.onQuestionReceived(question, index);
+        break;
+
+      case GameMessageType.answer:
+        // HOST receives opponent's answer. Try to score.
+        final selectedIndex = gm.payload['selectedIndex'] as int;
+        final resultPayload = notifier.onAnswerReceived(selectedIndex);
+        if (resultPayload != null) {
+          await sendGameMessage(
+            originId,
+            GameMessage(
+              gameId: gm.gameId,
+              gameType: GameType.trivia,
+              type: GameMessageType.result,
+              payload: resultPayload,
+            ),
+          );
+        }
+        break;
+
+      case GameMessageType.result:
+        // OPPONENT receives scored result from host.
+        notifier.onResultReceived(
+          correctIndex: gm.payload['correctIndex'] as int,
+          hostScore: gm.payload['hostScore'] as int,
+          opponentScore: gm.payload['opponentScore'] as int,
+          hostAnswerIndex: gm.payload['hostAnswerIndex'] as int,
+          opponentAnswerIndex: gm.payload['opponentAnswerIndex'] as int,
+        );
+        break;
+
+      case GameMessageType.end:
+        notifier.onGameEnded(
+          hostScore: gm.payload['hostScore'] as int,
+          opponentScore: gm.payload['opponentScore'] as int,
+        );
+        break;
+
+      case GameMessageType.move:
+        break; // Not used by Trivia.
     }
   }
 

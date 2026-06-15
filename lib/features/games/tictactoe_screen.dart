@@ -166,6 +166,7 @@ class _TicTacToeScreenState extends ConsumerState<TicTacToeScreen> {
                                   state.opponentId,
                                   GameMessage(
                                     gameId: state.gameId,
+                                    gameType: GameType.ticTacToe,
                                     type: GameMessageType.move,
                                     payload: {'index': index},
                                   ),
@@ -250,6 +251,7 @@ class _TicTacToeScreenState extends ConsumerState<TicTacToeScreen> {
                             opponentId,
                             GameMessage(
                               gameId: newGameId,
+                              gameType: GameType.ticTacToe,
                               type: GameMessageType.invite,
                               payload: {},
                             ),

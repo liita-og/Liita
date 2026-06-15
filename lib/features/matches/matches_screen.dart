@@ -229,12 +229,20 @@ class _GameEntry {
   final String title;
   final IconData icon;
   final bool available;
-  const _GameEntry(this.title, this.icon, {this.available = false});
+  final String routePath;
+  final GameType gameType;
+  const _GameEntry(
+    this.title,
+    this.icon, {
+    this.available = false,
+    this.routePath = '',
+    this.gameType = GameType.ticTacToe,
+  });
 }
 
 const _availableGames = [
-  _GameEntry('Tic-Tac-Toe', Icons.grid_3x3_rounded, available: true),
-  _GameEntry('Trivia', Icons.help_outline_rounded),
+  _GameEntry('Tic-Tac-Toe', Icons.grid_3x3_rounded, available: true, routePath: '/games/tictactoe', gameType: GameType.ticTacToe),
+  _GameEntry('Cabin Trivia', Icons.help_outline_rounded, available: true, routePath: '/games/trivia', gameType: GameType.trivia),
   _GameEntry('Word Chain', Icons.link_rounded),
   _GameEntry('Chess', Icons.sports_esports_outlined),
   _GameEntry('Battleship', Icons.radar_rounded),
@@ -315,12 +323,20 @@ class _GamePickerSheet extends StatelessWidget {
                         peerId,
                         GameMessage(
                           gameId: gameId,
+                          gameType: g.gameType,
                           type: GameMessageType.invite,
                           payload: {},
                         ),
                       );
-                      ref.read(ticTacToeProvider.notifier).startGame(peerId, peerName, gameId);
-                      context.push('/games/tictactoe');
+                      switch (g.gameType) {
+                        case GameType.ticTacToe:
+                          ref.read(ticTacToeProvider.notifier).startGame(peerId, peerName, gameId);
+                          break;
+                        case GameType.trivia:
+                          ref.read(triviaGameProvider.notifier).startGame(peerId, peerName, gameId);
+                          break;
+                      }
+                      context.push(g.routePath);
                     }
                   : null,
             );

@@ -8,6 +8,7 @@ import 'package:liita/features/radar/radar_screen.dart';
 import 'package:liita/features/matches/matches_screen.dart';
 import 'package:liita/features/games/games_screen.dart';
 import 'package:liita/features/games/tictactoe_screen.dart';
+import 'package:liita/features/games/trivia_screen.dart';
 import 'package:liita/features/lounge/lounge_screen.dart';
 import 'package:liita/features/profile/profile_screen.dart';
 import 'package:liita/features/chat/chat_screen.dart';
@@ -64,6 +65,10 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: 'tictactoe',
                 builder: (context, state) => const TicTacToeScreen(),
+              ),
+              GoRoute(
+                path: 'trivia',
+                builder: (context, state) => const TriviaScreen(),
               ),
             ],
           ),

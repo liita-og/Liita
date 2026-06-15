@@ -120,7 +120,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      '${next.peerName} wants to play Tic Tac Toe',
+                      '${next.peerName} wants to play ${next.gameType.label}',
                       style: const TextStyle(
                         color: AppColors.textPrimary,
                         fontSize: 18,
@@ -140,6 +140,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
                               next.peerId,
                               GameMessage(
                                 gameId: next.gameId,
+                                gameType: next.gameType,
                                 type: GameMessageType.decline,
                                 payload: {},
                               ),
@@ -164,17 +165,31 @@ class _HomeShellState extends ConsumerState<HomeShell>
                               next.peerId,
                               GameMessage(
                                 gameId: next.gameId,
+                                gameType: next.gameType,
                                 type: GameMessageType.accept,
                                 payload: {},
                               ),
                             );
-                            ref.read(ticTacToeProvider.notifier).onInviteAccepted(
-                              next.gameId,
-                              next.peerId,
-                              next.peerName,
-                            );
-                            ref.read(pendingGameInviteProvider.notifier).state = null;
-                            context.push('/games/tictactoe');
+                            switch (next.gameType) {
+                              case GameType.ticTacToe:
+                                ref.read(ticTacToeProvider.notifier).onInviteAccepted(
+                                      next.gameId,
+                                      next.peerId,
+                                      next.peerName,
+                                    );
+                                ref.read(pendingGameInviteProvider.notifier).state = null;
+                                context.push('/games/tictactoe');
+                                break;
+                              case GameType.trivia:
+                                ref.read(triviaGameProvider.notifier).onOpponentJoined(
+                                      next.gameId,
+                                      next.peerId,
+                                      next.peerName,
+                                    );
+                                ref.read(pendingGameInviteProvider.notifier).state = null;
+                                context.push('/games/trivia');
+                                break;
+                            }
                           },
                           child: const Text(
                             'Accept',

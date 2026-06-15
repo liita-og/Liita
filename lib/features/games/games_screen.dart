@@ -17,8 +17,17 @@ class _Game {
   final String description;
   final IconData icon;
   final bool available;
+  final String routePath;
+  final GameType gameType;
 
-  const _Game(this.title, this.description, this.icon, {this.available = false});
+  const _Game(
+    this.title,
+    this.description,
+    this.icon, {
+    this.available = false,
+    this.routePath = '',
+    this.gameType = GameType.ticTacToe,
+  });
 }
 
 const _games = [
@@ -27,8 +36,17 @@ const _games = [
     'Classic, now at 30,000 feet',
     Icons.grid_3x3_rounded,
     available: true,
+    routePath: '/games/tictactoe',
+    gameType: GameType.ticTacToe,
   ),
-  _Game('Trivia', 'Test your knowledge against the cabin', Icons.help_outline_rounded),
+  _Game(
+    'Cabin Trivia',
+    'Test your knowledge against the cabin',
+    Icons.help_outline_rounded,
+    available: true,
+    routePath: '/games/trivia',
+    gameType: GameType.trivia,
+  ),
   _Game('Word Chain', 'Keep the chain going or lose', Icons.link_rounded),
   _Game('Chess', 'A game of strategy and patience', Icons.sports_esports_outlined),
   _Game('Battleship', 'Sink the fleet', Icons.radar_rounded),
@@ -322,12 +340,20 @@ class _PeerRow extends ConsumerWidget {
               peerId,
               GameMessage(
                 gameId: gameId,
+                gameType: game.gameType,
                 type: GameMessageType.invite,
                 payload: {},
               ),
             );
-            ref.read(ticTacToeProvider.notifier).startGame(peerId, profile.name, gameId);
-            context.push('/games/tictactoe');
+            switch (game.gameType) {
+              case GameType.ticTacToe:
+                ref.read(ticTacToeProvider.notifier).startGame(peerId, profile.name, gameId);
+                break;
+              case GameType.trivia:
+                ref.read(triviaGameProvider.notifier).startGame(peerId, profile.name, gameId);
+                break;
+            }
+            context.push(game.routePath);
           },
         );
       },
