@@ -37,6 +37,9 @@ class MeshForegroundService : Service() {
         const val TARGET_MTU = 247
         // Safety timeout for each send task — prevents isSending deadlock if connectGatt hangs.
         const val SEND_TIMEOUT_MS = 8000L
+        // Residual 2C fix: re-read a peer's profile at most this often, so we can close
+        // the discovery connection without reconnecting on every scan callback.
+        const val REPROFILE_INTERVAL_MS = 60_000L
     }
 
     private val binder = LocalBinder()
@@ -68,6 +71,12 @@ class MeshForegroundService : Service() {
     // Bug 3 fix: Connection flood guard — tracks MAC addresses mid-connection
     // Value is the Job for the hang-timeout so we can cancel it on success.
     private val connectingDevices = ConcurrentHashMap<String, Job>()
+
+    // Residual 1B fix: hold the discovery-connect GATT so a hung connect can be closed.
+    private val connectingGatts = ConcurrentHashMap<String, BluetoothGatt>()
+
+    // Residual 2C fix: MAC -> last time we successfully read its profile.
+    private val lastProfiledAt = ConcurrentHashMap<String, Long>()
 
     // Bug 6 fix: Serial GATT write queue
     private data class WriteRequest(val gatt: BluetoothGatt, val payload: ByteArray)
@@ -152,6 +161,12 @@ class MeshForegroundService : Service() {
         dedupCache.clear()
         connectingDevices.values.forEach { it.cancel() }  // FIX 1B: cancel pending hang-timeout jobs
         connectingDevices.clear()
+        connectingGatts.values.forEach { g ->                 // Residual 1B fix
+            try { g.disconnect() } catch (_: Exception) {}
+            try { g.close() } catch (_: Exception) {}
+        }
+        connectingGatts.clear()
+        lastProfiledAt.clear()   // Residual 2C fix
         pendingSendGatt.getAndSet(null)?.let { g ->        // FIX 2A: close any in-flight send GATT
             try { g.disconnect() } catch (_: Exception) {}
             try { g.close() } catch (_: Exception) {}
@@ -172,7 +187,11 @@ class MeshForegroundService : Service() {
     // onMtuChanged → writeCharacteristic → onCharacteristicWrite → disconnect → close.
     // -------------------------------------------------------------------------
 
-    private data class SendTask(val device: BluetoothDevice, val payloadBytes: ByteArray)
+    private data class SendTask(
+        val device: BluetoothDevice,
+        val payloadBytes: ByteArray,
+        val isUnicastPrimary: Boolean = false   // Residual 2D fix: eligible for broadcast fallback
+    )
     private val sendQueue = ConcurrentLinkedQueue<SendTask>()
     @Volatile private var isSending = false
     private var sendJob: Job? = null
@@ -180,8 +199,8 @@ class MeshForegroundService : Service() {
     private val pendingSendGatt = AtomicReference<BluetoothGatt?>(null)
 
     @SuppressLint("MissingPermission")
-    private fun enqueueSend(device: BluetoothDevice, payloadBytes: ByteArray) {
-        sendQueue.add(SendTask(device, payloadBytes.copyOf()))
+    private fun enqueueSend(device: BluetoothDevice, payloadBytes: ByteArray, isUnicastPrimary: Boolean = false) {
+        sendQueue.add(SendTask(device, payloadBytes.copyOf(), isUnicastPrimary))
         drainSendQueue()
     }
 
@@ -230,6 +249,7 @@ class MeshForegroundService : Service() {
             private var servicesDiscovered = false
             private var mtuNegotiated = false
             private var payloadWritten = false
+            private var writeSucceeded = false
 
             private fun tryWrite(gatt: BluetoothGatt) {
                 if (servicesDiscovered && mtuNegotiated && !payloadWritten) {
@@ -289,6 +309,7 @@ class MeshForegroundService : Service() {
 
             override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
                 Log.d(TAG, "[LiitaBLE] write complete to ${task.device.address}: status=$status")
+                if (status == BluetoothGatt.GATT_SUCCESS) writeSucceeded = true
                 finishSend(gatt)
             }
 
@@ -299,6 +320,18 @@ class MeshForegroundService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "[LiitaBLE] finishSend close error: ${e.message}")
                 }
+
+                // Residual 2D fix: if a primary unicast attempt never completed its write,
+                // the target's MAC is likely stale — re-broadcast once to all other known devices.
+                if (task.isUnicastPrimary && !writeSucceeded) {
+                    Log.w(TAG, "[LiitaBLE] unicast send to ${task.device.address} failed — broadcasting as fallback")
+                    for (d in peerRegistry.getAllKnownDevices()) {
+                        if (d.address != task.device.address) {
+                            sendQueue.add(SendTask(d, task.payloadBytes.copyOf(), isUnicastPrimary = false))
+                        }
+                    }
+                }
+
                 sendJob?.cancel()  // Cancel the safety timeout — send completed normally
                 isSending = false
                 drainSendQueue()  // Process the next task in the queue
@@ -417,7 +450,7 @@ class MeshForegroundService : Service() {
         if (!packet.isBroadcast && packet.destinationId.isNotEmpty()) {
             val target = peerRegistry.getDeviceById(packet.destinationId)
             if (target != null) {
-                enqueueSend(target, payloadBytes)
+                enqueueSend(target, payloadBytes, isUnicastPrimary = true)
             } else {
                 Log.w(TAG, "[LiitaBLE] relayPacket: unicast target ${packet.destinationId.take(8)} not in registry — broadcasting as fallback")
                 for (device in peerRegistry.getAllKnownDevices()) { enqueueSend(device, payloadBytes) }
@@ -639,6 +672,10 @@ class MeshForegroundService : Service() {
                 Log.d("LiitaBLE", "[LiitaBLE] skipping $address — already connecting")
             } else if (peerRegistry.getAllConnections().any { it.device.address == address }) {
                 Log.d("LiitaBLE", "[LiitaBLE] skipping $address — already connected")
+            } else if (lastProfiledAt[address]?.let {
+                    System.currentTimeMillis() - it < REPROFILE_INTERVAL_MS
+                } == true) {
+                Log.d(TAG, "[LiitaBLE] skipping $address — profiled within last ${REPROFILE_INTERVAL_MS / 1000}s")
             } else {
                 Log.d("LiitaBLE", "[LiitaBLE] GATT connect attempt: device=$address")
 
@@ -648,10 +685,12 @@ class MeshForegroundService : Service() {
                 val hangTimeout = scope.launch {
                     delay(10_000L)
                     if (connectingDevices.containsKey(address)) {
-                        Log.w(TAG, "[LiitaBLE] connectGatt hang timeout for $address — clearing connectingDevices entry")
+                        Log.w(TAG, "[LiitaBLE] connectGatt hang timeout for $address — closing GATT and clearing entry")
                         connectingDevices.remove(address)
-                        // We have no gatt reference here (connectGatt returned on main thread),
-                        // so we cannot close it — but the slot will eventually be reclaimed by Android.
+                        connectingGatts.remove(address)?.let { g ->
+                            try { g.disconnect() } catch (_: Exception) {}
+                            try { g.close() } catch (_: Exception) {}
+                        }
                     }
                 }
                 connectingDevices[address] = hangTimeout
@@ -659,7 +698,8 @@ class MeshForegroundService : Service() {
                 // Connect on main thread
                 mainHandler.post {
                     if (hasPermissions()) {
-                        device.connectGatt(this@MeshForegroundService, false, gattClientCallback)
+                        val g = device.connectGatt(this@MeshForegroundService, false, gattClientCallback)
+                        if (g != null) connectingGatts[address] = g
                     } else {
                         hangTimeout.cancel()
                         connectingDevices.remove(address)
@@ -682,6 +722,7 @@ class MeshForegroundService : Service() {
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 // FIX 1B: cancel the hang-timeout job and remove from connecting set
                 connectingDevices.remove(address)?.cancel()
+                connectingGatts.remove(address)   // Residual 1B fix: no longer mid-connect
                 peerRegistry.addConnection(gatt)
                 Log.d("LiitaBLE", "[LiitaBLE] connected to $address, discovering services")
                 if (hasPermissions()) {
@@ -691,6 +732,7 @@ class MeshForegroundService : Service() {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 // FIX 1B: cancel the hang-timeout job and remove from connecting set
                 connectingDevices.remove(address)?.cancel()
+                connectingGatts.remove(address)   // Residual 1B fix: no longer mid-connect
                 peerRegistry.removeConnection(address)
                 Log.d("LiitaBLE", "[LiitaBLE] disconnected from $address (status=$status), closing GATT")
                 try {
@@ -703,6 +745,7 @@ class MeshForegroundService : Service() {
                 // Connection failed (e.g. status 133)
                 // FIX 1B: cancel the hang-timeout job and remove from connecting set
                 connectingDevices.remove(address)?.cancel()
+                connectingGatts.remove(address)   // Residual 1B fix: no longer mid-connect
                 Log.e("LiitaBLE", "[LiitaBLE] connection failed for $address, status=$status, closing GATT")
                 try {
                     gatt.close()
@@ -744,6 +787,8 @@ class MeshForegroundService : Service() {
                     val deviceId = try { JSONObject(profileJson).getString("deviceId") } catch (e: Exception) { address }
                     Log.d("LiitaBLE", "[LiitaBLE] peer discovered via GATT read: $deviceId")
                     onPeerDiscovered?.invoke(profileJson)
+                    lastProfiledAt[address] = System.currentTimeMillis()   // Residual 2C fix
+                    try { gatt.disconnect() } catch (_: Exception) {}        // free the connection slot
                 }
             } else {
                 Log.e("LiitaBLE", "[LiitaBLE] characteristic read failed for $address, status=$status")
