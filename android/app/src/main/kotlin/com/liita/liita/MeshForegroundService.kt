@@ -24,6 +24,7 @@ import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicReference
 
 class MeshForegroundService : Service() {
     companion object {
@@ -65,7 +66,8 @@ class MeshForegroundService : Service() {
     private lateinit var relayController: RelayController
 
     // Bug 3 fix: Connection flood guard — tracks MAC addresses mid-connection
-    private val connectingDevices = ConcurrentHashMap<String, Boolean>()
+    // Value is the Job for the hang-timeout so we can cancel it on success.
+    private val connectingDevices = ConcurrentHashMap<String, Job>()
 
     // Bug 6 fix: Serial GATT write queue
     private data class WriteRequest(val gatt: BluetoothGatt, val payload: ByteArray)
@@ -148,7 +150,12 @@ class MeshForegroundService : Service() {
         gattServer?.close()
         peerRegistry.clear()
         dedupCache.clear()
+        connectingDevices.values.forEach { it.cancel() }  // FIX 1B: cancel pending hang-timeout jobs
         connectingDevices.clear()
+        pendingSendGatt.getAndSet(null)?.let { g ->        // FIX 2A: close any in-flight send GATT
+            try { g.disconnect() } catch (_: Exception) {}
+            try { g.close() } catch (_: Exception) {}
+        }
         writeQueue.clear()
         isWriting = false
         sendQueue.clear()   // RC-3: Drain send queue on stop
@@ -169,17 +176,12 @@ class MeshForegroundService : Service() {
     private val sendQueue = ConcurrentLinkedQueue<SendTask>()
     @Volatile private var isSending = false
     private var sendJob: Job? = null
+    // FIX 2A/2B: Store GATT ref so the timeout coroutine can close it
+    private val pendingSendGatt = AtomicReference<BluetoothGatt?>(null)
 
     @SuppressLint("MissingPermission")
-    private fun enqueueSendToAll(payloadBytes: ByteArray) {
-        val knownDevices = peerRegistry.getAllKnownDevices()
-        if (knownDevices.isEmpty()) {
-            Log.w(TAG, "[LiitaBLE] relayPacket: no known devices in registry")
-            return
-        }
-        for (device in knownDevices) {
-            sendQueue.add(SendTask(device, payloadBytes.copyOf()))
-        }
+    private fun enqueueSend(device: BluetoothDevice, payloadBytes: ByteArray) {
+        sendQueue.add(SendTask(device, payloadBytes.copyOf()))
         drainSendQueue()
     }
 
@@ -189,16 +191,21 @@ class MeshForegroundService : Service() {
         val task = sendQueue.poll() ?: return
         if (!hasPermissions() || !isRunning) return
         isSending = true
+        pendingSendGatt.set(null)
 
         Log.d(TAG, "[LiitaBLE] drainSendQueue: connecting to ${task.device.address}")
 
-        // Safety timeout: if the GATT callback chain doesn't complete within
-        // SEND_TIMEOUT_MS, force-finish this task so the queue isn't permanently stuck.
+        // FIX 2A/2B: Safety timeout now also closes the hung GATT client so no slot is leaked.
         sendJob?.cancel()
         sendJob = scope.launch {
             delay(SEND_TIMEOUT_MS)
             if (isSending) {
-                Log.e(TAG, "[LiitaBLE] send timeout for ${task.device.address} — force-draining queue")
+                Log.e(TAG, "[LiitaBLE] send timeout for ${task.device.address} — closing GATT and force-draining")
+                // Close the hung GATT to release the clientif slot
+                pendingSendGatt.getAndSet(null)?.let { g ->
+                    try { g.disconnect() } catch (_: Exception) {}
+                    try { g.close() } catch (_: Exception) {}
+                }
                 isSending = false
                 mainHandler.post { drainSendQueue() }
             }
@@ -206,7 +213,8 @@ class MeshForegroundService : Service() {
 
         mainHandler.post {
             if (hasPermissions()) {
-                task.device.connectGatt(this, false, buildSendCallback(task), BluetoothDevice.TRANSPORT_LE)
+                val gatt = task.device.connectGatt(this, false, buildSendCallback(task), BluetoothDevice.TRANSPORT_LE)
+                pendingSendGatt.set(gatt)
             } else {
                 sendJob?.cancel()
                 isSending = false
@@ -404,7 +412,19 @@ class MeshForegroundService : Service() {
         val jsonStr = packet.toJson()
         val payloadStr = Utils.compressAndEncode(jsonStr)
         val payloadBytes = payloadStr.toByteArray(Charsets.UTF_8)
-        enqueueSendToAll(payloadBytes)   // RC-1/2/3/4: serialized, MTU-aware, always closes
+
+        // FIX 2D: Unicast packets go to one device only; only broadcasts fan out to all.
+        if (!packet.isBroadcast && packet.destinationId.isNotEmpty()) {
+            val target = peerRegistry.getDeviceById(packet.destinationId)
+            if (target != null) {
+                enqueueSend(target, payloadBytes)
+            } else {
+                Log.w(TAG, "[LiitaBLE] relayPacket: unicast target ${packet.destinationId.take(8)} not in registry — broadcasting as fallback")
+                for (device in peerRegistry.getAllKnownDevices()) { enqueueSend(device, payloadBytes) }
+            }
+        } else {
+            for (device in peerRegistry.getAllKnownDevices()) { enqueueSend(device, payloadBytes) }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -471,19 +491,22 @@ class MeshForegroundService : Service() {
         // Revised layout — single manufacturer data block in scan response:
         // shortId(8) + name(8) + age(1) + seat(4) + version(1) = 22 bytes + 4 header = 26 bytes.
         val deviceIdRaw = profile.getString("deviceId")
-        val shortId = deviceIdRaw.take(8).toByteArray(Charsets.UTF_8)
-        val name = profile.getString("name").take(8)
-        val age = profile.getInt("age").toByte()
-        val seat = profile.getString("seatNumber").take(4)
-        val version = profile.getInt("version").toByte()
+        // FIX 1C: Truncate by bytes, not characters, to prevent UTF-8 overflow.
+        fun String.truncateToBytes(maxBytes: Int): ByteArray {
+            val full = this.toByteArray(Charsets.UTF_8)
+            return if (full.size <= maxBytes) full else full.copyOf(maxBytes)
+        }
+        val shortId  = deviceIdRaw.truncateToBytes(8)   // slot [0..7]
+        val nameBytes = profile.getString("name").truncateToBytes(8)  // slot [8..15]
+        val age      = profile.getInt("age").toByte()                  // slot [16]
+        val seatBytes = profile.getString("seatNumber").truncateToBytes(4) // slot [17..20]
+        val version  = profile.getInt("version").toByte()              // slot [21]
 
         // 22 bytes: shortId(8) + name(8) + age(1) + seat(4) + version(1)
         val scanRespBytes = ByteArray(22)
         System.arraycopy(shortId, 0, scanRespBytes, 0, shortId.size)
-        val nameBytes = name.toByteArray(Charsets.UTF_8)
         System.arraycopy(nameBytes, 0, scanRespBytes, 8, nameBytes.size)
         scanRespBytes[16] = age
-        val seatBytes = seat.toByteArray(Charsets.UTF_8)
         System.arraycopy(seatBytes, 0, scanRespBytes, 17, seatBytes.size)
         scanRespBytes[21] = version
 
@@ -491,7 +514,7 @@ class MeshForegroundService : Service() {
             .addManufacturerData(0xFFFF, scanRespBytes)
             .build()
 
-        Log.d("LiitaBLE", "[LiitaBLE] startAdvertising: shortId=${deviceIdRaw.take(8)}, name=$name, scanRespBytes=${scanRespBytes.size}")
+        Log.d("LiitaBLE", "[LiitaBLE] startAdvertising: shortId=${deviceIdRaw.take(8)}, name=${String(nameBytes)}, scanRespBytes=${scanRespBytes.size}")
         bluetoothLeAdvertiser?.startAdvertising(settings, data, scanResponse, advertiseCallback)
     }
 
@@ -581,12 +604,19 @@ class MeshForegroundService : Service() {
         }
     }
 
-    // Bug 2 fix: resume scanning after a connect attempt completes
+    // FIX 1A: Resume scanning WITHOUT restarting the duty-cycle loop.
+    // Calling applyDutyCycle() here was creating a new startScan() on every connect/disconnect,
+    // easily tripping Android's hidden 5-scans-in-30s quota.
     private fun resumeScanningAfterConnect() {
         if (!isRunning || !hasPermissions()) return
-        // Re-apply duty cycle which will restart scanning per the current mode
-        Log.d("LiitaBLE", "[LiitaBLE] resuming scan after connect")
-        applyDutyCycle()
+        // Only restart if the duty cycle job has died (e.g. first startup).
+        // Normal operation: the loop is already running; don't touch it.
+        if (dutyCycleJob == null || dutyCycleJob?.isActive == false) {
+            Log.d("LiitaBLE", "[LiitaBLE] duty cycle was dead — restarting after connect")
+            applyDutyCycle()
+        } else {
+            Log.d("LiitaBLE", "[LiitaBLE] resuming scan after connect (duty cycle already active, no restart)")
+        }
     }
 
     private val scanCallback = object : ScanCallback() {
@@ -610,14 +640,29 @@ class MeshForegroundService : Service() {
             } else if (peerRegistry.getAllConnections().any { it.device.address == address }) {
                 Log.d("LiitaBLE", "[LiitaBLE] skipping $address — already connected")
             } else {
-                // Mark as connecting before stopping scan
-                connectingDevices[address] = true
                 Log.d("LiitaBLE", "[LiitaBLE] GATT connect attempt: device=$address")
+
+                // FIX 1B: Store a timeout Job in connectingDevices. If connectGatt never fires
+                // onConnectionStateChange (Android bug), we remove the address ourselves after
+                // 10s so it can be retried on the next scan hit.
+                val hangTimeout = scope.launch {
+                    delay(10_000L)
+                    if (connectingDevices.containsKey(address)) {
+                        Log.w(TAG, "[LiitaBLE] connectGatt hang timeout for $address — clearing connectingDevices entry")
+                        connectingDevices.remove(address)
+                        // We have no gatt reference here (connectGatt returned on main thread),
+                        // so we cannot close it — but the slot will eventually be reclaimed by Android.
+                    }
+                }
+                connectingDevices[address] = hangTimeout
 
                 // Connect on main thread
                 mainHandler.post {
                     if (hasPermissions()) {
                         device.connectGatt(this@MeshForegroundService, false, gattClientCallback)
+                    } else {
+                        hangTimeout.cancel()
+                        connectingDevices.remove(address)
                     }
                 }
             }
@@ -635,31 +680,29 @@ class MeshForegroundService : Service() {
             Log.d("LiitaBLE", "[LiitaBLE] onConnectionStateChange: device=$address, status=$status, newState=$newState")
 
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
-                // Bug 3: remove from connecting set
-                connectingDevices.remove(address)
+                // FIX 1B: cancel the hang-timeout job and remove from connecting set
+                connectingDevices.remove(address)?.cancel()
                 peerRegistry.addConnection(gatt)
                 Log.d("LiitaBLE", "[LiitaBLE] connected to $address, discovering services")
                 if (hasPermissions()) {
                     gatt.discoverServices()
                 }
-                // Bug 2: resume scanning since we stopped it before connect
                 resumeScanningAfterConnect()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                // Bug 3: remove from connecting set
-                connectingDevices.remove(address)
+                // FIX 1B: cancel the hang-timeout job and remove from connecting set
+                connectingDevices.remove(address)?.cancel()
                 peerRegistry.removeConnection(address)
-                // Bug 5: explicitly close to free GATT client slot
                 Log.d("LiitaBLE", "[LiitaBLE] disconnected from $address (status=$status), closing GATT")
                 try {
                     gatt.close()
                 } catch (e: Exception) {
                     Log.e("LiitaBLE", "[LiitaBLE] error closing GATT for $address", e)
                 }
-                // Bug 2: resume scanning on disconnect too
                 resumeScanningAfterConnect()
             } else {
                 // Connection failed (e.g. status 133)
-                connectingDevices.remove(address)
+                // FIX 1B: cancel the hang-timeout job and remove from connecting set
+                connectingDevices.remove(address)?.cancel()
                 Log.e("LiitaBLE", "[LiitaBLE] connection failed for $address, status=$status, closing GATT")
                 try {
                     gatt.close()

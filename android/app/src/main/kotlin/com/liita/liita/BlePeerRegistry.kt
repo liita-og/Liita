@@ -2,6 +2,7 @@ package com.liita.liita
 
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
+import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -10,12 +11,15 @@ import java.util.concurrent.ConcurrentHashMap
 class BlePeerRegistry {
     // Map of MAC address to BluetoothGatt
     private val connectedGatts = ConcurrentHashMap<String, BluetoothGatt>()
-    
+
     // Track discovered peers (Profile JSON) for the EventChannel
     private val discoveredPeers = ConcurrentHashMap<String, String>()
 
-    // Track all known BluetoothDevice objects for ephemeral connections
+    // Track all known BluetoothDevice objects for ephemeral connections (keyed by MAC)
     private val knownDevices = ConcurrentHashMap<String, BluetoothDevice>()
+
+    // FIX 2D: Map logical deviceId → BluetoothDevice for unicast routing
+    private val deviceIdToDevice = ConcurrentHashMap<String, BluetoothDevice>()
 
     fun addConnection(gatt: BluetoothGatt) {
         connectedGatts[gatt.device.address] = gatt
@@ -37,14 +41,24 @@ class BlePeerRegistry {
         return knownDevices.values.toList()
     }
     
-    fun updatePeerProfile(deviceId: String, profileJson: String): Boolean {
-        val existing = discoveredPeers[deviceId]
+    fun updatePeerProfile(macAddress: String, profileJson: String): Boolean {
+        val existing = discoveredPeers[macAddress]
         if (existing != profileJson) {
-            discoveredPeers[deviceId] = profileJson
+            discoveredPeers[macAddress] = profileJson
+            // FIX 2D: Record the deviceId → BluetoothDevice mapping when we learn the profile
+            knownDevices[macAddress]?.let { device ->
+                try {
+                    val deviceId = JSONObject(profileJson).getString("deviceId")
+                    deviceIdToDevice[deviceId] = device
+                } catch (_: Exception) {}
+            }
             return true
         }
         return false
     }
+
+    /** FIX 2D: Look up a device by its logical deviceId (from profile JSON). */
+    fun getDeviceById(deviceId: String): BluetoothDevice? = deviceIdToDevice[deviceId]
 
     fun clear() {
         for (gatt in connectedGatts.values) {
@@ -56,5 +70,6 @@ class BlePeerRegistry {
         connectedGatts.clear()
         discoveredPeers.clear()
         knownDevices.clear()
+        deviceIdToDevice.clear()
     }
 }
