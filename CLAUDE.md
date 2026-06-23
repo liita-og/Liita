@@ -186,3 +186,26 @@ These are platform limits that have bitten this project. Keep them in mind for a
 - Real testing requires 2–3 physical Android devices (BLE doesn't work on emulators).
   `flutter analyze` passing means it compiles, NOT that BLE behavior is correct — always
   validate mesh changes on real hardware.
+
+---
+
+## Known issues to investigate (owner-reported — root causes UNVERIFIED)
+
+These are observed symptoms, not diagnoses. Treat them as leads to investigate from
+first principles; do not assume any prior explanation is correct.
+
+- **Cabin Trivia** does not work reliably across a full multi-question game (both players
+  answering, scoring, advancing).
+- **"Play Again" / rematch** in the games is unreliable.
+- **Core mesh is intermittent** — discovery, waving, matching, private messaging, and the
+  lounge work sometimes and fail other times.
+- **Older Android versions** don't work (see the API-31 permission-split note above as one
+  lead to verify, not a conclusion).
+- **Behavior under load is untested** — many messages, messaging after extended gameplay,
+  many packets in flight.
+
+## Notable config
+
+- `android:allowBackup="false"` is set in `AndroidManifest.xml`. (Android Auto Backup was
+  restoring app data — the SQLite DB and the secure-storage prefs — across uninstall/reinstall;
+  the restored, Keystore-encrypted secure-storage could not be decrypted on the new install.)

@@ -37,9 +37,18 @@ class FlutterMeshService implements MeshService {
 
   StreamSubscription<UserProfile>? _peerCountSubscription;
 
-  // Lazily initialised broadcast streams from event channels.
-  Stream<UserProfile>? _peersStream;
+  // Lazily initialised broadcast stream from the packets event channel.
   Stream<MeshPacket>? _packetsStream;
+
+  // Peer discovery hub. Every peer ever discovered is accumulated in
+  // [_knownPeers] and re-broadcast through [_peersHub]. This is what makes the
+  // radar populate reliably: the discovery EventChannel is a broadcast stream
+  // that does NOT replay past events, and startMesh() attaches an internal
+  // peer-count listener immediately — so a peer discovered before the radar
+  // screen subscribes (e.g. during the splash screen) would otherwise be lost.
+  // By replaying [_knownPeers] to every new subscriber, timing stops mattering.
+  final Map<String, UserProfile> _knownPeers = {};
+  StreamController<UserProfile>? _peersHub;
 
   // ---------------------------------------------------------------------------
   // MeshService interface
@@ -50,13 +59,38 @@ class FlutterMeshService implements MeshService {
 
   @override
   Stream<UserProfile> get discoveredPeers {
-    _peersStream ??= _peersEventChannel
-        .receiveBroadcastStream()
-        .map<UserProfile>((dynamic event) {
-      final json = _decodeEvent(event);
-      return UserProfile.fromJson(json);
-    }).asBroadcastStream();
-    return _peersStream!;
+    // Start the single underlying EventChannel subscription once, feeding the
+    // hub and accumulating every peer seen.
+    if (_peersHub == null) {
+      _peersHub = StreamController<UserProfile>.broadcast();
+      _peersEventChannel.receiveBroadcastStream().listen(
+        (dynamic event) {
+          try {
+            final peer = UserProfile.fromJson(_decodeEvent(event));
+            _knownPeers[peer.deviceId] = peer;
+            if (!_peersHub!.isClosed) _peersHub!.add(peer);
+          } catch (e, st) {
+            debugPrint('FlutterMeshService: peer parse error (dropped): $e\n$st');
+          }
+        },
+        onError: (Object e, StackTrace st) {
+          debugPrint('FlutterMeshService: discoveredPeers stream error: $e');
+        },
+      );
+    }
+
+    // Each subscriber first receives the peers already known (replay), then all
+    // live updates. This is the key to reliable discovery for late subscribers.
+    return Stream<UserProfile>.multi((controller) {
+      for (final peer in _knownPeers.values) {
+        controller.add(peer);
+      }
+      final sub = _peersHub!.stream.listen(
+        controller.add,
+        onError: controller.addError,
+      );
+      controller.onCancel = sub.cancel;
+    });
   }
 
   @override
