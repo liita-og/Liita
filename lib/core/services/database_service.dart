@@ -144,20 +144,33 @@ class DatabaseService {
   // ===========================================================================
 
   /// Insert or update a peer profile from BLE discovery.
+  ///
+  /// A profile learned via the advertisement/GATT read normally carries the
+  /// peer's public key, but an incoming update with an empty key (e.g. a
+  /// re-discovery that raced) must NOT wipe a key we already stored — that
+  /// would silently break encrypted chat. So an empty incoming key is merged
+  /// with the existing stored key rather than overwriting it.
   Future<void> upsertProfile(UserProfile profile) async {
+    var effective = profile;
+    if (profile.publicKey.isEmpty) {
+      final existing = await getProfile(profile.deviceId);
+      if (existing != null && existing.publicKey.isNotEmpty) {
+        effective = profile.copyWith(publicKey: existing.publicKey);
+      }
+    }
     await _database.insert(
       'profiles',
       {
-        'device_id': profile.deviceId,
-        'name': profile.name,
-        'age': profile.age,
-        'seat_number': profile.seatNumber,
-        'occupation': profile.occupation,
-        'photo_hash': profile.photoHash,
-        'version': profile.version,
-        'public_key': profile.publicKey,
-        'icebreaker_prompt': profile.icebreakerPrompt,
-        'icebreaker_answer': profile.icebreakerAnswer,
+        'device_id': effective.deviceId,
+        'name': effective.name,
+        'age': effective.age,
+        'seat_number': effective.seatNumber,
+        'occupation': effective.occupation,
+        'photo_hash': effective.photoHash,
+        'version': effective.version,
+        'public_key': effective.publicKey,
+        'icebreaker_prompt': effective.icebreakerPrompt,
+        'icebreaker_answer': effective.icebreakerAnswer,
         'last_seen': DateTime.now().millisecondsSinceEpoch,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,

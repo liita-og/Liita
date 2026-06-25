@@ -24,7 +24,25 @@ void main() async {
   // This guarantees the router gets the right initial location synchronously.
   final storage = StorageService.instance;
   final bool isOnboarded = await storage.isOnboardingComplete();
-  final UserProfile? storedProfile = isOnboarded ? await storage.loadProfile() : null;
+  UserProfile? storedProfile = isOnboarded ? await storage.loadProfile() : null;
+
+  // Keep the advertised public key in sync with the actual keypair. This covers
+  // two cases: (1) installs onboarded before the key was embedded in the profile
+  // (empty key), and (2) a keypair that changed underneath us. Without this, the
+  // profile peers read would carry a stale key and encrypted chat would fail.
+  if (storedProfile != null) {
+    try {
+      final pub = await crypto.exportPublicKey(await crypto.getPublicKey());
+      if (storedProfile.publicKey != pub) {
+        storedProfile = storedProfile.copyWith(publicKey: pub);
+        await storage.saveProfile(storedProfile);
+        await db.upsertProfile(storedProfile);
+        debugPrint('[main] Synced profile publicKey to current keypair');
+      }
+    } catch (e) {
+      debugPrint('[main] publicKey sync failed: $e');
+    }
+  }
 
   // Initialize MeshService
   final mesh = FlutterMeshService();

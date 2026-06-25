@@ -95,6 +95,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
     try {
       debugPrint('[Onboarding] Starting completion flow...');
+
+      // Export this device's ECDH public key so it travels inside the profile
+      // (advertised + served over GATT). Without this, peers can never derive
+      // the shared key and encrypted chat falls back to raw ciphertext.
+      final crypto = ref.read(cryptoServiceProvider);
+      final publicKeyBase64 =
+          await crypto.exportPublicKey(await crypto.getPublicKey());
+
       final profile = UserProfile(
         deviceId: _existingDeviceId ?? const Uuid().v4(),
         name: _nameController.text.trim(),
@@ -104,6 +112,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         icebreakerPrompt: IcebreakerPrompts.prompts[_selectedPromptIndex],
         icebreakerAnswer: _icebreakerAnswerController.text.trim(),
         photoHash: _photoPath,
+        publicKey: publicKeyBase64,
       );
 
       final db = ref.read(databaseServiceProvider);

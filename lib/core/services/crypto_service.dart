@@ -89,11 +89,19 @@ abstract class CryptoService {
 /// Production [CryptoService] backed by `pointycastle` for crypto primitives
 /// and `flutter_secure_storage` for key persistence.
 class CryptoServiceImpl implements CryptoService {
-  static const String _sharedKeyPrefix = 'liita_shared_key_';
   static const String _curveName = 'prime256v1';
 
   final FlutterSecureStorage _storage;
   final Uuid _uuid;
+
+  /// In-memory cache of derived shared keys, keyed by matchId.
+  ///
+  /// A shared key is a deterministic function of (our private key, peer's public
+  /// key) — both of which persist (private key in secure storage, peer key in
+  /// the DB) — so it never needs to be persisted itself. It lives only in this
+  /// cache for the session and is re-derived on demand (see AppController) when
+  /// the cache is cold after a restart.
+  final Map<String, Uint8List> _sharedKeyCache = {};
 
   late final ECDomainParameters _domainParams;
   late final SecureRandom _secureRandom;
@@ -101,7 +109,16 @@ class CryptoServiceImpl implements CryptoService {
   CryptoServiceImpl({
     FlutterSecureStorage? storage,
     Uuid? uuid,
-  })  : _storage = storage ?? const FlutterSecureStorage(),
+  })  : _storage = storage ??
+            const FlutterSecureStorage(
+              // Use the modern AndroidX EncryptedSharedPreferences backend, same
+              // as StorageService. The legacy default (KeyStore RSA per-value)
+              // proved unreliable on-device: reads of the persisted private key
+              // intermittently returned null, causing getOrCreatePrivateKey to
+              // regenerate the keypair and silently change this device's
+              // identity — which broke ECDH (each peer held a stale public key).
+              aOptions: AndroidOptions(encryptedSharedPreferences: true),
+            ),
         _uuid = uuid ?? const Uuid();
 
   // -----------------------------------------------------------------------
@@ -302,17 +319,15 @@ class CryptoServiceImpl implements CryptoService {
 
   @override
   Future<void> storeSharedKey(String matchId, Uint8List key) async {
-    await _storage.write(
-      key: '$_sharedKeyPrefix$matchId',
-      value: base64Encode(key),
-    );
+    // Memory-only: the shared key is re-derivable, so it is never persisted.
+    _sharedKeyCache[matchId] = key;
   }
 
   @override
   Future<Uint8List?> getSharedKey(String matchId) async {
-    final encoded = await _storage.read(key: '$_sharedKeyPrefix$matchId');
-    if (encoded == null) return null;
-    return base64Decode(encoded);
+    // A cold cache (after restart) is repopulated by deterministic
+    // re-derivation in AppController, not by reading persisted state.
+    return _sharedKeyCache[matchId];
   }
 
   // -----------------------------------------------------------------------

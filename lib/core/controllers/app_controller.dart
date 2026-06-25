@@ -266,7 +266,7 @@ class AppController {
     String plaintext = packet.data;
 
     // Attempt decryption with the shared key
-    final sharedKey = await _crypto.getSharedKey(matchId);
+    final sharedKey = await _getOrDeriveSharedKey(packet.originId, matchId);
     if (sharedKey != null && packet.data.isNotEmpty) {
       try {
         // The data field contains a JSON-encoded EncryptedPayload
@@ -649,7 +649,7 @@ class AppController {
     // Attempt encryption
     String dataPayload = plaintext;
     String nonce = '';
-    final sharedKey = await _crypto.getSharedKey(matchId);
+    final sharedKey = await _getOrDeriveSharedKey(peerId, matchId);
     if (sharedKey != null) {
       try {
         final encrypted = await _crypto.encrypt(plaintext, sharedKey);
@@ -787,6 +787,21 @@ class AppController {
     } catch (e) {
       debugPrint('AppController: storeRemotePublicKey failed: $e');
     }
+  }
+
+  /// Returns the shared key for [matchId], deriving it on demand from the
+  /// peer's stored public key if it isn't already available. This self-heals
+  /// the case where the in-memory key cache is cold after a restart (or secure
+  /// storage failed to return a persisted key) — derivation is deterministic,
+  /// so it reconstructs the identical key from the DB-persisted peer pubkey and
+  /// our private key.
+  Future<Uint8List?> _getOrDeriveSharedKey(String peerId, String matchId) async {
+    var key = await _crypto.getSharedKey(matchId);
+    if (key == null) {
+      await _deriveAndStoreSharedKey(peerId, matchId);
+      key = await _crypto.getSharedKey(matchId);
+    }
+    return key;
   }
 
   /// Derives and stores the ECDH shared secret for encrypted messaging.
