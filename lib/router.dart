@@ -12,6 +12,7 @@ import 'package:liita/features/games/trivia_screen.dart';
 import 'package:liita/features/lounge/lounge_screen.dart';
 import 'package:liita/features/profile/profile_screen.dart';
 import 'package:liita/features/chat/chat_screen.dart';
+import 'package:liita/features/showcase/showcase_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final isOnboarded = ref.watch(onboardingCompleteProvider);
@@ -93,6 +94,11 @@ final routerProvider = Provider<GoRouter>((ref) {
           final peerName = state.uri.queryParameters['name'] ?? 'Chat';
           return ChatScreen(matchId: matchId, peerName: peerName);
         },
+      ),
+      // TEMP DEBUG: standalone neumorphic UI showcase (reached from Profile).
+      GoRoute(
+        path: '/showcase',
+        builder: (context, state) => const ShowcaseScreen(),
       ),
     ],
   );

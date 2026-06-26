@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
@@ -25,27 +25,14 @@ class MatchesScreen extends ConsumerWidget {
             // ── Header ──────────────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Connections',
-                    style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  const Text(
-                    'Mutual waves',
-                    style: TextStyle(
-                      color: AppColors.textTertiary,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
+              child: const Text(
+                'Connections',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: -0.5,
+                ),
               ),
             ),
 
@@ -62,17 +49,16 @@ class MatchesScreen extends ConsumerWidget {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Container(
-                              width: 56,
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: AppColors.surface,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: AppColors.glassBorder, width: 1),
+                            Neumorphic(
+                              style: const NeumorphicStyle(
+                                boxShape: NeumorphicBoxShape.circle(),
+                                depth: 4,
+                                color: NeuDark.base,
                               ),
+                              padding: const EdgeInsets.all(16),
                               child: const Icon(
                                 Icons.people_outline_rounded,
-                                color: AppColors.textTertiary,
+                                color: NeuDark.accentBright,
                                 size: 24,
                               ),
                             ),
@@ -145,13 +131,14 @@ class _MatchTile extends ConsumerWidget {
           onTap: () => context.push(
             '/chat/$matchId?name=${Uri.encodeComponent(profile.name)}',
           ),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.glassBorder, width: 1),
+          child: Neumorphic(
+            style: NeumorphicStyle(
+              boxShape:
+                  NeumorphicBoxShape.roundRect(BorderRadius.circular(18)),
+              depth: 4,
+              color: NeuDark.base,
             ),
+            padding: const EdgeInsets.all(14),
             child: Row(
               children: [
                 AvatarWidget(profile: profile, size: 48),

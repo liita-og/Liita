@@ -2,73 +2,74 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 // =============================================================================
-// LIITA DESIGN SYSTEM — Warm Charcoal + Gold Edition
+// LIITA DESIGN SYSTEM — Cool Slate + Soft Blue (dark neumorphic)
 // =============================================================================
-// Dual-tone palette: near-black warm charcoal base + muted amber/gold accent.
-// Minimal, premium, distinctive — not cold-grey, not generic.
+// Dark soft-UI palette: a true mid-dark cool-slate base (so neu light/dark
+// shadows both read) with a calm blue accent that is analogous to the base.
+// Minimal, premium, cohesive. See NeuDark for the neumorphic surface tokens.
 
 class AppColors {
   AppColors._();
 
-  // ── Backgrounds — warm charcoal ──
-  static const Color background    = Color(0xFF0E0D0C); // warm near-black
-  static const Color backgroundLight = Color(0xFF131210); // slightly lifted
-  static const Color surface       = Color(0xFF1A1816); // warm dark surface
-  static const Color surfaceLight  = Color(0xFF252220); // elevated surface
+  // ── Backgrounds — cool slate (background == NeuDark.base) ──
+  static const Color background    = Color(0xFF262A33); // mid-dark slate
+  static const Color backgroundLight = Color(0xFF2A2E37); // slightly lifted
+  static const Color surface       = Color(0xFF2A2E37); // flat-card fallback
+  static const Color surfaceLight  = Color(0xFF323843); // elevated / chips
 
-  // ── Glass / borders ──
-  static const Color glass         = Color(0x14C9A85C); // gold tint 8%
-  static const Color glassBorder   = Color(0x14C9A85C); // gold tint 8%
+  // ── Glass / borders — subtle light hairline ──
+  static const Color glass         = Color(0x0FFFFFFF); // white 6%
+  static const Color glassBorder   = Color(0x0FFFFFFF); // white 6%
 
-  // ── Accent — muted gold (buttons, active state, indicators) ──
-  static const Color primary       = Color(0xFFC9A85C); // warm amber/gold
-  static const Color primaryLight  = Color(0xFFD4B870); // lighter gold
-  static const Color primaryDark   = Color(0xFFAA8C48); // deeper gold
+  // ── Accent — soft blue (buttons, active state, indicators) ──
+  static const Color primary       = Color(0xFF4F8FCB); // blue
+  static const Color primaryLight  = Color(0xFF6FA8DC); // brighter on-dark
+  static const Color primaryDark   = Color(0xFF3E73A6); // pressed
 
   // ── Keep for BLE status indicators ──
-  static const Color accent        = Color(0xFFC9A85C);
-  static const Color accentLight   = Color(0xFFD4B870);
-  static const Color accentDark    = Color(0xFFAA8C48);
-  static const Color accentMuted   = Color(0xFF8A7145);
+  static const Color accent        = Color(0xFF4F8FCB);
+  static const Color accentLight   = Color(0xFF6FA8DC);
+  static const Color accentDark    = Color(0xFF3E73A6);
+  static const Color accentMuted   = Color(0xFF4A6A8A);
 
   // ── Semantic colours ──
-  static const Color wave          = Color(0xFFC9A85C);
-  static const Color waveLight     = Color(0xFFD4B870);
-  static const Color waveDark      = Color(0xFFAA8C48);
-  static const Color match         = Color(0xFFC9A85C);
-  static const Color matchLight    = Color(0xFFD4B870);
-  static const Color success       = Color(0xFF4A4540);
-  static const Color successDark   = Color(0xFF3A3530);
-  static const Color error         = Color(0xFFEF4444);
-  static const Color warning       = Color(0xFFC9A85C);
+  static const Color wave          = Color(0xFF4F8FCB);
+  static const Color waveLight     = Color(0xFF6FA8DC);
+  static const Color waveDark      = Color(0xFF3E73A6);
+  static const Color match         = Color(0xFF4F8FCB);
+  static const Color matchLight    = Color(0xFF6FA8DC);
+  static const Color success       = Color(0xFF5DBE9A); // muted teal
+  static const Color successDark   = Color(0xFF3E8E72);
+  static const Color error         = Color(0xFFE5645D); // softened red
+  static const Color warning       = Color(0xFFE0A24A); // amber (semantic)
 
   // ── Text hierarchy ──
-  static const Color textPrimary   = Color(0xFFF5F0E8); // warm off-white
-  static const Color textSecondary = Color(0xFF9E9589); // warm grey
-  static const Color textTertiary  = Color(0xFF5C5450); // muted warm grey
-  static const Color textOnPrimary = Color(0xFF0E0D0C); // dark text on gold button
+  static const Color textPrimary   = Color(0xFFE7E9EE); // soft near-white
+  static const Color textSecondary = Color(0xFFA2A9B5); // cool grey
+  static const Color textTertiary  = Color(0xFF6C7280); // muted cool grey
+  static const Color textOnPrimary = Color(0xFFFFFFFF); // white text on blue
 
   // ── Structural ──
-  static const Color divider       = Color(0xFF2A2620);
-  static const Color shimmer       = Color(0xFF252220);
+  static const Color divider       = Color(0xFF2F343D);
+  static const Color shimmer       = Color(0xFF2A2E37);
 
-  // ── Avatar backgrounds (warm tones) ──
+  // ── Avatar backgrounds (cool slate tones) ──
   static const List<Color> avatarColors = [
-    Color(0xFF2A2620),
-    Color(0xFF1E1C18),
-    Color(0xFF352F28),
-    Color(0xFF181614),
+    Color(0xFF2E333D),
+    Color(0xFF272B33),
+    Color(0xFF343A45),
+    Color(0xFF22262D),
   ];
 
   // ── Gradients ──
   static const LinearGradient primaryGradient = LinearGradient(
-    colors: [Color(0xFFC9A85C), Color(0xFFAA8C48)],
+    colors: [Color(0xFF4F8FCB), Color(0xFF3E73A6)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
   static const LinearGradient surfaceGradient = LinearGradient(
-    colors: [Color(0xFF1A1816), Color(0xFF252220)],
+    colors: [Color(0xFF2A2E37), Color(0xFF323843)],
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
   );
@@ -78,14 +79,59 @@ class AppColors {
   static const LinearGradient radarGradient     = primaryGradient;
   static const LinearGradient sentBubbleGradient = primaryGradient;
   static const LinearGradient navGlowGradient   = LinearGradient(
-    colors: [Color(0x00C9A85C), Color(0x22C9A85C), Color(0x00C9A85C)],
+    colors: [Color(0x004F8FCB), Color(0x224F8FCB), Color(0x004F8FCB)],
     begin: Alignment.centerLeft,
     end: Alignment.centerRight,
   );
   static const RadialGradient radarPulseGradient = RadialGradient(
-    colors: [Color(0x22C9A85C), Color(0x11C9A85C), Color(0x00C9A85C)],
+    colors: [Color(0x224F8FCB), Color(0x114F8FCB), Color(0x004F8FCB)],
     stops: [0.0, 0.5, 1.0],
   );
+}
+
+/// Design tokens for the neumorphic (soft-UI) showcase surface.
+///
+/// This is a deliberately LIGHT palette, distinct from the app's dark
+/// "Warm Charcoal + Gold" theme — it backs the standalone neumorphic showcase
+/// screen, which is wrapped in its own NeumorphicTheme rather than altering the
+/// app-wide theme.
+class NeuTokens {
+  NeuTokens._();
+
+  static const Color base = Color(0xFFE3E6EB); // soft light-grey surface
+  static const Color lightShadow = Color(0xFFFFFFFF); // top-left highlight
+  static const Color darkShadow = Color(0xFFA3B1C6); // bottom-right shadow
+  static const Color accent = Color(0xFF4F8FCB); // blue accent
+  static const Color text = Color(0xFF4A4A4A); // primary text/icon
+
+  static const double pillRadius = 50.0;
+}
+
+/// Dark neumorphic (soft-UI) tokens — the app's primary surface language.
+///
+/// A true mid-dark cool-slate base so both the top-left highlight and the
+/// bottom-right shadow read on dark; a calm blue accent analogous to the base;
+/// a faint white hairline to crisp edges where the soft shadow alone is muddy.
+/// These back the app-wide dark [NeumorphicThemeData] (built in main.dart) and
+/// are referenced directly by hand-painted surfaces.
+class NeuDark {
+  NeuDark._();
+
+  static const Color base = Color(0xFF262A33); // background + raised surface
+  static const Color highlight = Color(0xFF31363F); // top-left light shadow
+  static const Color shadow = Color(0xFF1B1E24); // bottom-right dark shadow
+  static const Color hairline = Color(0x0FFFFFFF); // white 6% edge crisp
+
+  static const Color accent = Color(0xFF4F8FCB); // blue
+  static const Color accentBright = Color(0xFF6FA8DC); // accent text/icon on dark
+  static const Color accentDeep = Color(0xFF3E73A6); // pressed/active
+
+  static const Color text = Color(0xFFE7E9EE);
+  static const Color textMuted = Color(0xFFA2A9B5);
+  static const Color textFaint = Color(0xFF6C7280);
+
+  static const double radius = 18.0;
+  static const double pillRadius = 999.0;
 }
 
 class AppSpacing {

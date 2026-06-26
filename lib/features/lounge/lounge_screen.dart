@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/models/broadcast_message.dart';
@@ -159,12 +159,14 @@ class _LoungeScreenState extends ConsumerState<LoungeScreen> {
                 top: false,
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: AppColors.glassBorder, width: 1),
+                  child: Neumorphic(
+                    style: NeumorphicStyle(
+                      boxShape: NeumorphicBoxShape.roundRect(
+                          BorderRadius.circular(18)),
+                      depth: -4,
+                      color: NeuDark.base,
                     ),
+                    padding: const EdgeInsets.only(left: 4, right: 6),
                     child: Row(
                       children: [
                         Expanded(
@@ -187,23 +189,18 @@ class _LoungeScreenState extends ConsumerState<LoungeScreen> {
                             onSubmitted: (_) => _sendBroadcast(),
                           ),
                         ),
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: GestureDetector(
-                            onTap: _sendBroadcast,
-                            child: Container(
-                              width: 32,
-                              height: 32,
-                              decoration: const BoxDecoration(
-                                color: AppColors.primary,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.arrow_upward_rounded,
-                                color: AppColors.textOnPrimary,
-                                size: 16,
-                              ),
-                            ),
+                        NeumorphicButton(
+                          onPressed: _sendBroadcast,
+                          style: const NeumorphicStyle(
+                            boxShape: NeumorphicBoxShape.circle(),
+                            depth: 3,
+                            color: NeuDark.accent,
+                          ),
+                          padding: const EdgeInsets.all(8),
+                          child: const Icon(
+                            Icons.arrow_upward_rounded,
+                            color: Colors.white,
+                            size: 16,
                           ),
                         ),
                       ],
@@ -270,7 +267,7 @@ class _MessageBubble extends StatelessWidget {
                     maxWidth: MediaQuery.of(context).size.width * 0.72,
                   ),
                   decoration: BoxDecoration(
-                    color: isMe ? AppColors.primary : AppColors.surface,
+                    color: isMe ? AppColors.primary : AppColors.surfaceLight,
                     borderRadius: BorderRadius.only(
                       topLeft: const Radius.circular(16),
                       topRight: const Radius.circular(16),
@@ -279,7 +276,7 @@ class _MessageBubble extends StatelessWidget {
                     ),
                     border: isMe
                         ? null
-                        : Border.all(color: AppColors.glassBorder, width: 1),
+                        : Border.all(color: NeuDark.hairline, width: 1),
                   ),
                   child: Text(
                     message.text,

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/providers/providers.dart';
@@ -71,7 +71,16 @@ class ProfileScreen extends ConsumerWidget {
               const SizedBox(height: 40),
 
               // ── Stats ──────────────────────────────────────────────────
-              _StatsRow(),
+              Neumorphic(
+                style: NeumorphicStyle(
+                  boxShape:
+                      NeumorphicBoxShape.roundRect(BorderRadius.circular(18)),
+                  depth: 3,
+                  color: NeuDark.base,
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: _StatsRow(),
+              ),
 
               const SizedBox(height: 32),
 
@@ -107,26 +116,13 @@ class ProfileScreen extends ConsumerWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
-                          Text(
-                            'This flight',
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Liita session active',
-                            style: TextStyle(
-                              color: AppColors.textTertiary,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
+                      const Text(
+                        'This flight',
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -151,26 +147,25 @@ class ProfileScreen extends ConsumerWidget {
               const SizedBox(height: 32),
 
               // ── End session ────────────────────────────────────────────
-              GestureDetector(
-                onTap: () => _confirmEndSession(context, ref),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: AppColors.error.withValues(alpha: 0.15),
-                      width: 1,
-                    ),
+              SizedBox(
+                width: double.infinity,
+                child: NeumorphicButton(
+                  onPressed: () => _confirmEndSession(context, ref),
+                  style: NeumorphicStyle(
+                    boxShape: NeumorphicBoxShape.roundRect(
+                        BorderRadius.circular(16)),
+                    depth: 3,
+                    color: NeuDark.base,
                   ),
-                  alignment: Alignment.center,
-                  child: const Text(
-                    'End Flight Session',
-                    style: TextStyle(
-                      color: AppColors.error,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: const Center(
+                    child: Text(
+                      'End Flight Session',
+                      style: TextStyle(
+                        color: AppColors.error,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ),
@@ -289,14 +284,13 @@ class _InfoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.glassBorder, width: 1),
+    return Neumorphic(
+      style: NeumorphicStyle(
+        boxShape: NeumorphicBoxShape.roundRect(BorderRadius.circular(18)),
+        depth: 3,
+        color: NeuDark.base,
       ),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,

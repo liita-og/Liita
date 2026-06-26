@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/models/chat_message.dart';
@@ -107,17 +107,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Container(
-                          width: 64,
-                          height: 64,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColors.primary.withValues(alpha: 0.08),
+                        Neumorphic(
+                          style: const NeumorphicStyle(
+                            boxShape: NeumorphicBoxShape.circle(),
+                            depth: 4,
+                            color: NeuDark.base,
                           ),
-                          child: Icon(
+                          padding: const EdgeInsets.all(18),
+                          child: const Icon(
                             Icons.waving_hand_rounded,
                             size: 28,
-                            color: AppColors.primary.withValues(alpha: 0.5),
+                            color: NeuDark.accentBright,
                           ),
                         ),
                         const SizedBox(height: AppSpacing.md),
@@ -152,78 +152,61 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           // Input bar
           Container(
             padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm,
+              horizontal: AppSpacing.md,
               vertical: AppSpacing.sm,
             ),
             decoration: const BoxDecoration(
-              color: AppColors.surface,
+              color: NeuDark.base,
               border: Border(
-                top: BorderSide(color: AppColors.glassBorder, width: 1),
+                top: BorderSide(color: NeuDark.hairline, width: 1),
               ),
             ),
             child: SafeArea(
               child: Row(
                 children: [
                   Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      maxLines: null,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _sendMessage(),
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 15,
+                    child: Neumorphic(
+                      style: NeumorphicStyle(
+                        boxShape: NeumorphicBoxShape.roundRect(
+                            BorderRadius.circular(24)),
+                        depth: -4,
+                        color: NeuDark.base,
                       ),
-                      decoration: InputDecoration(
-                        hintText: 'Type a message...',
-                        hintStyle: const TextStyle(
-                          color: AppColors.textTertiary,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: TextField(
+                        controller: _controller,
+                        maxLines: null,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => _sendMessage(),
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 15,
                         ),
-                        filled: true,
-                        fillColor: AppColors.surfaceLight,
-                        border: OutlineInputBorder(
-                          borderRadius: AppRadius.pillAll,
-                          borderSide: const BorderSide(
-                            color: AppColors.glassBorder,
-                            width: 1,
+                        decoration: const InputDecoration(
+                          hintText: 'Type a message...',
+                          hintStyle: TextStyle(color: AppColors.textTertiary),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: AppSpacing.md,
+                            vertical: AppSpacing.sm + 2,
                           ),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: AppRadius.pillAll,
-                          borderSide: const BorderSide(
-                            color: AppColors.glassBorder,
-                            width: 1,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: AppRadius.pillAll,
-                          borderSide: const BorderSide(
-                            color: AppColors.primary,
-                            width: 1,
-                          ),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.md,
-                          vertical: AppSpacing.sm,
                         ),
                       ),
                     ),
                   ),
                   const SizedBox(width: AppSpacing.sm),
-                  GestureDetector(
-                    onTap: _sendMessage,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: AppColors.primaryGradient,
-                      ),
-                      child: const Icon(
-                        Icons.send_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
+                  NeumorphicButton(
+                    onPressed: _sendMessage,
+                    style: const NeumorphicStyle(
+                      boxShape: NeumorphicBoxShape.circle(),
+                      depth: 3,
+                      color: NeuDark.accent,
+                    ),
+                    padding: const EdgeInsets.all(12),
+                    child: const Icon(
+                      Icons.send_rounded,
+                      color: Colors.white,
+                      size: 20,
                     ),
                   ),
                 ],
@@ -267,8 +250,7 @@ class _MessageBubble extends StatelessWidget {
               vertical: AppSpacing.sm + 2,
             ),
             decoration: BoxDecoration(
-              gradient: isMine ? AppColors.sentBubbleGradient : null,
-              color: isMine ? null : AppColors.surfaceLight,
+              color: isMine ? AppColors.primary : AppColors.surfaceLight,
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(18),
                 topRight: const Radius.circular(18),
@@ -277,15 +259,15 @@ class _MessageBubble extends StatelessWidget {
               ),
               border: isMine
                   ? null
-                  : Border.all(color: AppColors.glassBorder, width: 1),
+                  : Border.all(color: NeuDark.hairline, width: 1),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
                   message.ciphertext,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
+                  style: TextStyle(
+                    color: isMine ? Colors.white : AppColors.textPrimary,
                     fontSize: 15,
                     height: 1.4,
                   ),
@@ -311,7 +293,7 @@ class _MessageBubble extends StatelessWidget {
                             : Icons.done_rounded,
                         size: 14,
                         color: message.isRead
-                            ? AppColors.accent
+                            ? Colors.white
                             : Colors.white.withValues(alpha: 0.5),
                       ),
                     ],

@@ -45,10 +45,17 @@ class AvatarWidget extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: bgColor,
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.04),
-                width: 1,
-              ),
+              border: Border.all(color: NeuDark.hairline, width: 1),
+              boxShadow: const [
+                BoxShadow(
+                    color: NeuDark.shadow,
+                    offset: Offset(3, 3),
+                    blurRadius: 6),
+                BoxShadow(
+                    color: NeuDark.highlight,
+                    offset: Offset(-3, -3),
+                    blurRadius: 6),
+              ],
             ),
             child: resolvedPhotoPath != null && resolvedPhotoPath.isNotEmpty
                 ? ClipOval(

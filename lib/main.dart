@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:liita/core/theme/app_theme.dart';
 import 'package:liita/core/services/database_service.dart';
@@ -70,6 +70,24 @@ void main() async {
   );
 }
 
+/// App-wide dark soft-UI theme for the flutter_neumorphic_plus widgets.
+/// Both `theme` and `darkTheme` are set to this so the look is always dark,
+/// regardless of the device's system brightness. (The standalone showcase wraps
+/// its own light NeumorphicTheme, which overrides this locally.)
+const NeumorphicThemeData _neuDarkTheme = NeumorphicThemeData(
+  baseColor: NeuDark.base,
+  accentColor: NeuDark.accent,
+  variantColor: NeuDark.accentDeep,
+  defaultTextColor: NeuDark.text,
+  shadowLightColor: NeuDark.highlight,
+  shadowDarkColor: NeuDark.shadow,
+  shadowLightColorEmboss: NeuDark.highlight,
+  shadowDarkColorEmboss: NeuDark.shadow,
+  depth: 5,
+  intensity: 0.55,
+  lightSource: LightSource.topLeft,
+);
+
 class LiitaApp extends ConsumerWidget {
   const LiitaApp({super.key});
 
@@ -82,6 +100,11 @@ class LiitaApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark,
       routerConfig: router,
+      builder: (context, child) => NeumorphicTheme(
+        theme: _neuDarkTheme,
+        darkTheme: _neuDarkTheme,
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
   }
 }

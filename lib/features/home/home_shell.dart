@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:go_router/go_router.dart';
@@ -251,63 +251,47 @@ class _FloatingTabBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 20, left: 48, right: 48),
-        child: Container(
-          height: 60,
-          decoration: BoxDecoration(
-            color: const Color(0xE8121214), // surface with 91% opacity
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.06),
-              width: 1,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.5),
-                blurRadius: 32,
-                offset: const Offset(0, 8),
-              ),
-            ],
+        padding: const EdgeInsets.only(bottom: 20, left: 40, right: 40),
+        child: Neumorphic(
+          style: NeumorphicStyle(
+            boxShape:
+                NeumorphicBoxShape.roundRect(BorderRadius.circular(999)),
+            depth: 6,
+            intensity: 0.6,
+            color: NeuDark.base,
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: List.generate(5, (i) {
-              final isActive = i == selectedIndex;
-              return GestureDetector(
-                onTap: () => onTap(i),
-                behavior: HitTestBehavior.opaque,
-                child: SizedBox(
-                  width: 44,
-                  height: 60,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 180),
-                        child: Icon(
-                          isActive ? _activeIcons[i] : _icons[i],
-                          key: ValueKey(isActive),
-                          size: 22,
-                          color: isActive
-                              ? AppColors.textPrimary
-                              : AppColors.textTertiary,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: isActive ? 4 : 0,
-                        height: isActive ? 4 : 0,
-                        decoration: const BoxDecoration(
-                          color: AppColors.textPrimary,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ],
+          child: SizedBox(
+            height: 64,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: List.generate(5, (i) {
+                final isActive = i == selectedIndex;
+                return GestureDetector(
+                  onTap: () => onTap(i),
+                  behavior: HitTestBehavior.opaque,
+                  child: SizedBox(
+                    width: 48,
+                    height: 64,
+                    child: Center(
+                      child: isActive
+                          ? Neumorphic(
+                              style: const NeumorphicStyle(
+                                boxShape: NeumorphicBoxShape.circle(),
+                                depth: -3,
+                                intensity: 0.7,
+                                color: NeuDark.base,
+                              ),
+                              padding: const EdgeInsets.all(9),
+                              child: Icon(_activeIcons[i],
+                                  size: 20, color: NeuDark.accentBright),
+                            )
+                          : Icon(_icons[i],
+                              size: 22, color: NeuDark.textFaint),
+                    ),
                   ),
-                ),
-              );
-            }),
+                );
+              }),
+            ),
           ),
         ),
       ),

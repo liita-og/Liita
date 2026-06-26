@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:liita/core/theme/app_theme.dart';
@@ -104,7 +104,7 @@ class _RadarScreenState extends ConsumerState<RadarScreen> {
                     height: 4,
                     decoration: BoxDecoration(
                       color: isActive
-                          ? AppColors.textPrimary
+                          ? AppColors.primary
                           : AppColors.surfaceLight,
                       borderRadius: BorderRadius.circular(999),
                     ),
@@ -213,19 +213,22 @@ class _StackCard extends StatelessWidget {
       transformAlignment: Alignment.topCenter,
       child: Opacity(
         opacity: opacity,
-        child: Container(
-          width: double.infinity,
-          height: 440,
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.glassBorder, width: 1),
-            boxShadow: isFront ? AppShadows.elevated : [],
+        child: Neumorphic(
+          style: NeumorphicStyle(
+            boxShape:
+                NeumorphicBoxShape.roundRect(BorderRadius.circular(24)),
+            depth: isFront ? 8 : 3,
+            intensity: 0.6,
+            color: NeuDark.base,
           ),
-          child: isFront
-              ? _FrontCardContent(
-                  peer: peer, onWave: onWave, onNext: onNext)
-              : _BackCardContent(stackDepth: stackDepth),
+          child: SizedBox(
+            width: double.infinity,
+            height: 440,
+            child: isFront
+                ? _FrontCardContent(
+                    peer: peer, onWave: onWave, onNext: onNext)
+                : _BackCardContent(stackDepth: stackDepth),
+          ),
         ),
       ),
     );
@@ -345,18 +348,17 @@ class _FrontCardContent extends ConsumerWidget {
           Row(
             children: [
               Expanded(
-                child: GestureDetector(
-                  onTap: onNext,
-                  child: Container(
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: AppColors.surfaceLight,
-                      borderRadius: BorderRadius.circular(12),
-                      border:
-                          Border.all(color: AppColors.glassBorder, width: 1),
-                    ),
-                    alignment: Alignment.center,
-                    child: const Text(
+                child: NeumorphicButton(
+                  onPressed: onNext,
+                  style: NeumorphicStyle(
+                    boxShape: NeumorphicBoxShape.roundRect(
+                        BorderRadius.circular(14)),
+                    depth: 4,
+                    color: NeuDark.base,
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  child: const Center(
+                    child: Text(
                       'Next',
                       style: TextStyle(
                         color: AppColors.textSecondary,
@@ -371,19 +373,20 @@ class _FrontCardContent extends ConsumerWidget {
               if (isMatched)
                 Expanded(
                   flex: 2,
-                  child: GestureDetector(
-                    onTap: () => context.go('/matches'),
-                    child: Container(
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      alignment: Alignment.center,
-                      child: const Text(
+                  child: NeumorphicButton(
+                    onPressed: () => context.go('/matches'),
+                    style: NeumorphicStyle(
+                      boxShape: NeumorphicBoxShape.roundRect(
+                          BorderRadius.circular(14)),
+                      depth: 4,
+                      color: NeuDark.accent,
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    child: const Center(
+                      child: Text(
                         'Message',
                         style: TextStyle(
-                          color: AppColors.textOnPrimary,
+                          color: Colors.white,
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
                         ),
@@ -394,19 +397,22 @@ class _FrontCardContent extends ConsumerWidget {
               else
                 Expanded(
                   flex: 2,
-                  child: GestureDetector(
-                    onTap: hasWaved ? null : onWave,
-                    child: Container(
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: hasWaved ? AppColors.surface : AppColors.primary,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      alignment: Alignment.center,
+                  child: NeumorphicButton(
+                    onPressed: hasWaved ? null : onWave,
+                    style: NeumorphicStyle(
+                      boxShape: NeumorphicBoxShape.roundRect(
+                          BorderRadius.circular(14)),
+                      depth: hasWaved ? -3 : 4,
+                      color: hasWaved ? NeuDark.base : NeuDark.accent,
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    child: Center(
                       child: Text(
                         hasWaved ? 'Wave Sent' : 'Wave',
                         style: TextStyle(
-                          color: hasWaved ? AppColors.textTertiary : AppColors.textOnPrimary,
+                          color: hasWaved
+                              ? AppColors.textTertiary
+                              : Colors.white,
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
                         ),
@@ -486,17 +492,16 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              shape: BoxShape.circle,
-              border: Border.all(color: AppColors.glassBorder, width: 1),
+          Neumorphic(
+            style: const NeumorphicStyle(
+              boxShape: NeumorphicBoxShape.circle(),
+              depth: 4,
+              color: NeuDark.base,
             ),
+            padding: const EdgeInsets.all(20),
             child: const Icon(
               Icons.wifi_tethering_rounded,
-              color: AppColors.textTertiary,
+              color: NeuDark.accentBright,
               size: 28,
             ),
           ),
@@ -509,11 +514,6 @@ class _EmptyState extends StatelessWidget {
               fontWeight: FontWeight.w500,
               letterSpacing: -0.3,
             ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Keep the app open while we search',
-            style: TextStyle(color: AppColors.textTertiary, fontSize: 14),
           ),
         ],
       ),

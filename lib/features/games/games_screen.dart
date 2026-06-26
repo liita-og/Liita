@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
@@ -14,7 +14,6 @@ import 'package:liita/core/widgets/avatar_widget.dart';
 
 class _Game {
   final String title;
-  final String description;
   final IconData icon;
   final bool available;
   final String routePath;
@@ -22,7 +21,6 @@ class _Game {
 
   const _Game(
     this.title,
-    this.description,
     this.icon, {
     this.available = false,
     this.routePath = '',
@@ -33,7 +31,6 @@ class _Game {
 const _games = [
   _Game(
     'Tic-Tac-Toe',
-    'Classic, now at 30,000 feet',
     Icons.grid_3x3_rounded,
     available: true,
     routePath: '/games/tictactoe',
@@ -41,15 +38,14 @@ const _games = [
   ),
   _Game(
     'Cabin Trivia',
-    'Test your knowledge against the cabin',
     Icons.help_outline_rounded,
     available: true,
     routePath: '/games/trivia',
     gameType: GameType.trivia,
   ),
-  _Game('Word Chain', 'Keep the chain going or lose', Icons.link_rounded),
-  _Game('Chess', 'A game of strategy and patience', Icons.sports_esports_outlined),
-  _Game('Battleship', 'Sink the fleet', Icons.radar_rounded),
+  _Game('Word Chain', Icons.link_rounded),
+  _Game('Chess', Icons.sports_esports_outlined),
+  _Game('Battleship', Icons.radar_rounded),
 ];
 
 // ---------------------------------------------------------------------------
@@ -70,27 +66,14 @@ class GamesScreen extends ConsumerWidget {
           children: [
             const Padding(
               padding: EdgeInsets.fromLTRB(24, 16, 24, 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Games',
-                    style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  SizedBox(height: 2),
-                  Text(
-                    'Play with your connections',
-                    style: TextStyle(
-                      color: AppColors.textTertiary,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
+              child: Text(
+                'Games',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: -0.5,
+                ),
               ),
             ),
             const SizedBox(height: 20),
@@ -145,57 +128,41 @@ class _GameCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: game.available ? AppColors.primary.withValues(alpha: 0.25) : AppColors.glassBorder,
-            width: 1,
-          ),
+      child: Neumorphic(
+        style: NeumorphicStyle(
+          boxShape: NeumorphicBoxShape.roundRect(BorderRadius.circular(18)),
+          depth: game.available ? 4 : 2,
+          color: NeuDark.base,
         ),
+        padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: game.available
-                    ? AppColors.primary.withValues(alpha: 0.12)
-                    : AppColors.surfaceLight,
-                shape: BoxShape.circle,
-                border: Border.all(color: AppColors.glassBorder, width: 1),
+            Neumorphic(
+              style: NeumorphicStyle(
+                boxShape: const NeumorphicBoxShape.circle(),
+                depth: game.available ? -3 : 2,
+                color: NeuDark.base,
               ),
+              padding: const EdgeInsets.all(11),
               child: Icon(
                 game.icon,
-                color: game.available ? AppColors.primary : AppColors.textTertiary,
+                color: game.available
+                    ? NeuDark.accentBright
+                    : AppColors.textTertiary,
                 size: 18,
               ),
             ),
             const SizedBox(width: 16),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    game.title,
-                    style: TextStyle(
-                      color: game.available ? AppColors.textPrimary : AppColors.textSecondary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    game.description,
-                    style: const TextStyle(
-                      color: AppColors.textTertiary,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
+              child: Text(
+                game.title,
+                style: TextStyle(
+                  color: game.available
+                      ? AppColors.textPrimary
+                      : AppColors.textSecondary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
             if (!game.available)
@@ -215,7 +182,8 @@ class _GameCard extends StatelessWidget {
                 ),
               )
             else
-              const Icon(Icons.chevron_right_rounded, color: AppColors.textTertiary),
+              const Icon(Icons.chevron_right_rounded,
+                  color: NeuDark.accentBright),
           ],
         ),
       ),
