@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -379,50 +379,49 @@ class _IcebreakerPage extends StatelessWidget {
             itemCount: IcebreakerPrompts.prompts.length,
             itemBuilder: (context, i) {
               final isSelected = i == selectedIndex;
-              return GestureDetector(
-                onTap: () => onSelectPrompt(i),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 180,
-                  margin: const EdgeInsets.only(right: AppSpacing.sm),
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? AppColors.primary.withValues(alpha: 0.12)
-                        : AppColors.surfaceLight,
-                    borderRadius: AppRadius.lgAll,
-                    border: Border.all(
-                      color:
-                          isSelected ? AppColors.primary : AppColors.glassBorder,
-                      width: isSelected ? 1.5 : 1,
+              return Padding(
+                padding: const EdgeInsets.only(right: AppSpacing.sm),
+                child: GestureDetector(
+                  onTap: () => onSelectPrompt(i),
+                  child: Neumorphic(
+                    style: NeumorphicStyle(
+                      boxShape: NeumorphicBoxShape.roundRect(
+                          BorderRadius.circular(16)),
+                      depth: 4,
+                      color: isSelected ? NeuDark.accent : NeuDark.base,
                     ),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        _promptIcons[i % _promptIcons.length],
-                        color: isSelected
-                            ? AppColors.primary
-                            : AppColors.textTertiary,
-                        size: 26,
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    child: SizedBox(
+                      width: 156,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _promptIcons[i % _promptIcons.length],
+                            color: isSelected
+                                ? Colors.white
+                                : NeuDark.accentBright,
+                            size: 26,
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Text(
+                            IcebreakerPrompts.prompts[i],
+                            textAlign: TextAlign.center,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: isSelected
+                                  ? Colors.white
+                                  : AppColors.textSecondary,
+                              fontSize: 12,
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: AppSpacing.sm),
-                      Text(
-                        IcebreakerPrompts.prompts[i],
-                        textAlign: TextAlign.center,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isSelected
-                              ? AppColors.textPrimary
-                              : AppColors.textSecondary,
-                          fontSize: 12,
-                          fontWeight:
-                              isSelected ? FontWeight.w600 : FontWeight.w400,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               );
@@ -529,43 +528,43 @@ class _PhotoPage extends StatelessWidget {
         Center(
           child: GestureDetector(
             onTap: () => _pickPhoto(context),
-            child: Container(
-              width: 150,
-              height: 150,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.surfaceLight,
-                border: Border.all(
-                  color: AppColors.primary.withValues(alpha: 0.3),
-                  width: 2,
-                ),
-                image: photoPath != null
-                    ? DecorationImage(
-                        image: FileImage(File(photoPath!)),
-                        fit: BoxFit.cover,
-                      )
-                    : null,
+            child: Neumorphic(
+              style: NeumorphicStyle(
+                boxShape: const NeumorphicBoxShape.circle(),
+                depth: photoPath != null ? 5 : -5,
+                color: NeuDark.base,
               ),
-              child: photoPath == null
-                  ? const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.camera_alt_outlined,
-                          color: AppColors.primary,
-                          size: 40,
+              child: SizedBox(
+                width: 150,
+                height: 150,
+                child: photoPath != null
+                    ? ClipOval(
+                        child: Image.file(
+                          File(photoPath!),
+                          width: 150,
+                          height: 150,
+                          fit: BoxFit.cover,
                         ),
-                        SizedBox(height: AppSpacing.sm),
-                        Text(
-                          'Tap to add',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 13,
+                      )
+                    : const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.camera_alt_outlined,
+                            color: NeuDark.accentBright,
+                            size: 40,
                           ),
-                        ),
-                      ],
-                    )
-                  : null,
+                          SizedBox(height: AppSpacing.sm),
+                          Text(
+                            'Tap to add',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
             ),
           ),
         ),
@@ -600,14 +599,13 @@ class _ConfirmationPage extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const SizedBox(height: AppSpacing.xxl),
-            Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: AppColors.primaryGradient,
-                boxShadow: AppShadows.primaryGlow,
+            Neumorphic(
+              style: const NeumorphicStyle(
+                boxShape: NeumorphicBoxShape.circle(),
+                depth: 5,
+                color: NeuDark.accent,
               ),
+              padding: const EdgeInsets.all(26),
               child: const Icon(
                 Icons.check_rounded,
                 size: 48,

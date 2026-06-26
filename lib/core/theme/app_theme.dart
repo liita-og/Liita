@@ -333,7 +333,7 @@ class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.surface,
+        fillColor: AppColors.surfaceLight,
         border: OutlineInputBorder(
           borderRadius: AppRadius.lgAll,
           borderSide: const BorderSide(color: AppColors.glassBorder, width: 1),
@@ -344,7 +344,7 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: AppRadius.lgAll,
-          borderSide: const BorderSide(color: AppColors.textSecondary, width: 1),
+          borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: AppRadius.lgAll,

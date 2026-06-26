@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
@@ -450,28 +450,23 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
                   onTap: locked || _tappedIndex != null
                       ? null
                       : () => _onAnswerTapped(i),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? AppColors.primary.withValues(alpha: 0.2)
-                          : AppColors.surface,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: isSelected
-                            ? AppColors.primary
-                            : AppColors.glassBorder,
-                        width: isSelected ? 1.5 : 1,
-                      ),
+                  child: Neumorphic(
+                    style: NeumorphicStyle(
+                      boxShape: NeumorphicBoxShape.roundRect(
+                          BorderRadius.circular(14)),
+                      depth: isSelected ? -4 : 4,
+                      color: isSelected ? NeuDark.accent : NeuDark.base,
                     ),
+                    padding: const EdgeInsets.all(12),
                     child: Row(
                       children: [
                         Container(
                           width: 24,
                           height: 24,
                           decoration: BoxDecoration(
-                            color: AppColors.surfaceLight,
+                            color: isSelected
+                                ? Colors.white.withValues(alpha: 0.25)
+                                : AppColors.surfaceLight,
                             shape: BoxShape.circle,
                           ),
                           alignment: Alignment.center,
@@ -479,8 +474,8 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
                             labels[i],
                             style: TextStyle(
                               color: isSelected
-                                  ? AppColors.primary
-                                  : AppColors.textTertiary,
+                                  ? Colors.white
+                                  : NeuDark.accentBright,
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                             ),
@@ -492,7 +487,7 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
                             options[i],
                             style: TextStyle(
                               color: isSelected
-                                  ? AppColors.textPrimary
+                                  ? Colors.white
                                   : AppColors.textSecondary,
                               fontSize: 12,
                               height: 1.3,
@@ -705,13 +700,13 @@ class _ScoreBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.glassBorder),
+    return Neumorphic(
+      style: NeumorphicStyle(
+        boxShape: NeumorphicBoxShape.roundRect(BorderRadius.circular(14)),
+        depth: 3,
+        color: NeuDark.base,
       ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
           Expanded(

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
@@ -145,50 +145,69 @@ class _TicTacToeScreenState extends ConsumerState<TicTacToeScreen> {
             Opacity(
               opacity: (isFinished || isDisconnected) ? 0.5 : 1.0,
               child: Center(
-                child: SizedBox(
-                  width: MediaQuery.of(context).size.width * 0.7,
-                  height: MediaQuery.of(context).size.width * 0.7,
-                  child: GridView.builder(
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                    ),
-                    itemCount: 9,
-                    itemBuilder: (context, index) {
-                      final cell = state.board[index];
-                      final canTap =
-                          !isFinished && !isDisconnected && state.isMyTurn && cell.isEmpty;
-                      return GestureDetector(
-                        onTap: canTap
-                            ? () {
-                                ref.read(ticTacToeProvider.notifier).applyMove(index);
-                                ref.read(appControllerProvider).sendGameMessage(
-                                  state.opponentId,
-                                  GameMessage(
-                                    gameId: state.gameId,
-                                    gameType: GameType.ticTacToe,
-                                    type: GameMessageType.move,
-                                    payload: {'index': index},
-                                  ),
-                                );
-                              }
-                            : null,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: AppColors.glassBorder),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            cell,
-                            style: TextStyle(
-                              fontSize: 48,
-                              fontWeight: FontWeight.bold,
-                              color: cell == 'X' ? AppColors.primary : Colors.deepOrange,
+                child: Neumorphic(
+                  style: NeumorphicStyle(
+                    boxShape:
+                        NeumorphicBoxShape.roundRect(BorderRadius.circular(20)),
+                    depth: -6,
+                    color: NeuDark.base,
+                  ),
+                  padding: const EdgeInsets.all(10),
+                  child: SizedBox(
+                    width: MediaQuery.of(context).size.width * 0.7,
+                    height: MediaQuery.of(context).size.width * 0.7,
+                    child: GridView.builder(
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                      ),
+                      itemCount: 9,
+                      itemBuilder: (context, index) {
+                        final cell = state.board[index];
+                        final canTap = !isFinished &&
+                            !isDisconnected &&
+                            state.isMyTurn &&
+                            cell.isEmpty;
+                        return GestureDetector(
+                          onTap: canTap
+                              ? () {
+                                  ref
+                                      .read(ticTacToeProvider.notifier)
+                                      .applyMove(index);
+                                  ref
+                                      .read(appControllerProvider)
+                                      .sendGameMessage(
+                                        state.opponentId,
+                                        GameMessage(
+                                          gameId: state.gameId,
+                                          gameType: GameType.ticTacToe,
+                                          type: GameMessageType.move,
+                                          payload: {'index': index},
+                                        ),
+                                      );
+                                }
+                              : null,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border:
+                                  Border.all(color: NeuDark.hairline, width: 1),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              cell,
+                              style: TextStyle(
+                                fontSize: 48,
+                                fontWeight: FontWeight.bold,
+                                color: cell == 'X'
+                                    ? NeuDark.accentBright
+                                    : AppColors.warning,
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),

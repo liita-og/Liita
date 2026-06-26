@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:liita/core/theme/app_theme.dart';
@@ -38,22 +38,19 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Placeholder for Logo
-            Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: AppColors.primary.withValues(alpha: 0.3),
-                  width: 2,
-                ),
+            // Logo
+            Neumorphic(
+              style: const NeumorphicStyle(
+                boxShape: NeumorphicBoxShape.circle(),
+                depth: 6,
+                intensity: 0.6,
+                color: NeuDark.base,
               ),
+              padding: const EdgeInsets.all(26),
               child: const Icon(
                 Icons.flight_takeoff_rounded,
                 size: 50,
-                color: AppColors.primary,
+                color: NeuDark.accentBright,
               ),
             ),
             const SizedBox(height: 24),
