@@ -7,6 +7,7 @@ import 'package:liita/core/services/storage_service.dart';
 import 'package:liita/core/services/mesh_service_flutter.dart';
 import 'package:liita/core/models/user_profile.dart';
 import 'package:liita/core/providers/providers.dart';
+import 'package:liita/core/widgets/global_alert_banner.dart';
 import 'package:liita/router.dart';
 
 void main() async {
@@ -103,7 +104,12 @@ class LiitaApp extends ConsumerWidget {
       builder: (context, child) => NeumorphicTheme(
         theme: _neuDarkTheme,
         darkTheme: _neuDarkTheme,
-        child: child ?? const SizedBox.shrink(),
+        child: Stack(
+          children: [
+            child ?? const SizedBox.shrink(),
+            const GlobalAlertBanner(),
+          ],
+        ),
       ),
     );
   }

@@ -55,6 +55,15 @@ class NotificationService {
     );
 
     await _plugin.initialize(initSettings);
+
+    // Android 13+ (API 33) requires the POST_NOTIFICATIONS runtime permission;
+    // without it, wave/connection notifications silently never appear. The
+    // permission is declared in the manifest — request it here at first init.
+    await _plugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+
     _initialized = true;
   }
 
@@ -69,8 +78,8 @@ class NotificationService {
     HapticFeedback.lightImpact();
 
     await _showNotification(
-      title: 'Someone waved at you!',
-      body: '$senderName wants to connect',
+      title: '$senderName has sent you a wave!',
+      body: 'Tap to open Liita and wave back.',
     );
   }
 
@@ -81,8 +90,8 @@ class NotificationService {
     HapticFeedback.heavyImpact();
 
     await _showNotification(
-      title: "You're connected!",
-      body: 'You and $peerName are now connected',
+      title: 'You have connected with $peerName!',
+      body: 'Tap to say hello.',
     );
   }
 
@@ -121,6 +130,7 @@ class NotificationService {
       priority: Priority.high,
       playSound: true,
       enableVibration: true,
+      color: Color(0xFF4F8FCB), // NeuDark.accent — matches the app theme
     );
 
     const darwinDetails = DarwinNotificationDetails(

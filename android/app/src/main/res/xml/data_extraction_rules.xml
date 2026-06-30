@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Liita stores nothing that should survive an uninstall or move to a new device:
+  the SQLite DB (discovery/matches/chat), secure-storage prefs (keys), and any
+  cached files are all per-device and per-install. allowBackup="false" already
+  disables cloud backup; these rules additionally exclude every data domain from
+  BOTH cloud backup AND Android 12+ device-to-device transfer, so a fresh install
+  always starts clean with no lingering or restored data.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+        <exclude domain="file" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+        <exclude domain="file" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

@@ -25,17 +25,27 @@ class _RadarScreenState extends ConsumerState<RadarScreen> {
   @override
   Widget build(BuildContext context) {
     final peersAsync = ref.watch(peersProvider);
+    final wavedProfiles = ref.watch(wavedPeerProfilesProvider).valueOrNull ??
+        const <UserProfile>[];
     final localProfile = ref.watch(localProfileProvider);
+
+    // Merge live discovered peers with peers we've waved at (loaded from the DB)
+    // so a waved peer's card persists even when they're offline or after the app
+    // restarts. Non-waved peers come only from the live stream.
+    final livePeers = peersAsync.valueOrNull ?? const <UserProfile>[];
+    final byId = <String, UserProfile>{
+      for (final p in livePeers) p.deviceId: p,
+    };
+    for (final p in wavedProfiles) {
+      byId.putIfAbsent(p.deviceId, () => p);
+    }
+    final peers = byId.values.toList();
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         bottom: false,
-        child: peersAsync.when(
-          data: (peers) => _buildContent(peers, localProfile),
-          loading: () => _buildContent([], localProfile),
-          error: (_, __) => _buildContent([], localProfile),
-        ),
+        child: _buildContent(peers, localProfile),
       ),
     );
   }
@@ -125,16 +135,8 @@ class _RadarScreenState extends ConsumerState<RadarScreen> {
     await ref.read(appControllerProvider).sendWave(peer.deviceId);
     ref.read(wavedAtProvider.notifier)
         .update((state) => {...state, peer.deviceId});
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Wave sent to ${peer.name}'),
-          backgroundColor: AppColors.surfaceLight,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: AppRadius.lgAll),
-        ),
-      );
-    }
+    // No in-app snackbar — the radar card flips to "Wave Sent", and the peer
+    // receives a "<name> has sent you a wave!" notification on their phone.
   }
 }
 

@@ -33,6 +33,10 @@ class _HomeShellState extends ConsumerState<HomeShell>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Initialize notifications + request POST_NOTIFICATIONS up front so wave
+      // and connection notifications can actually fire on Android 13+.
+      ref.read(notificationServiceProvider).initialize();
+
       final localProfile = ref.read(localProfileProvider);
       if (localProfile != null) {
         FlutterBluePlus.adapterState.listen((state) {
@@ -49,6 +53,22 @@ class _HomeShellState extends ConsumerState<HomeShell>
         ref.read(appControllerProvider).onMatchCreated = (peerId) {
           ref.read(newMatchProvider.notifier).state = peerId;
         };
+
+        // Restore persisted wave state from the DB so a peer you've waved at
+        // keeps its radar card across app restarts, and incoming-wave badges
+        // survive too. (Out-of-range removal for non-waved peers is handled by
+        // the native presence signal.)
+        final db = ref.read(databaseServiceProvider);
+        db.getWavedPeerIds(localProfile.deviceId).then((ids) {
+          if (ids.isNotEmpty && mounted) {
+            ref.read(wavedAtProvider.notifier).update((s) => {...s, ...ids});
+          }
+        });
+        db.getWavedByIds(localProfile.deviceId).then((ids) {
+          if (ids.isNotEmpty && mounted) {
+            ref.read(wavedByProvider.notifier).update((s) => {...s, ...ids});
+          }
+        });
       }
     });
   }
@@ -79,23 +99,9 @@ class _HomeShellState extends ConsumerState<HomeShell>
     final currentIndex = _tabs.indexWhere((t) => location.startsWith(t));
     final selectedIndex = currentIndex >= 0 ? currentIndex : 0;
 
-    ref.listen<String?>(newMatchProvider, (previous, next) {
-      if (next != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              "You're connected!",
-              style: TextStyle(color: AppColors.textOnPrimary, fontWeight: FontWeight.bold),
-            ),
-            backgroundColor: AppColors.primary,
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 3),
-          ),
-        );
-        // Reset provider so we don't repeatedly trigger
-        Future.microtask(() => ref.read(newMatchProvider.notifier).state = null);
-      }
-    });
+    // Connection feedback is delivered via a system notification
+    // ("You have connected with X!") fired from AppController._createMatch,
+    // so no in-app snackbar is shown here.
 
     ref.listen<PendingGameInvite?>(pendingGameInviteProvider, (previous, next) {
       if (next != null) {
