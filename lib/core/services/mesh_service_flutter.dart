@@ -24,6 +24,12 @@ class FlutterMeshService implements MeshService {
   static const _methodChannel = MethodChannel('com.liita.app/mesh');
   static const _peersEventChannel = EventChannel('com.liita.app/peers');
   static const _packetsEventChannel = EventChannel('com.liita.app/packets');
+  static const _presenceEventChannel = EventChannel('com.liita.app/presence');
+
+  /// How long a peer can go unseen (no scan hit, no profile re-read) before
+  /// being considered out of range and expired from the live peer list.
+  static const _presenceTimeout = Duration(seconds: 30);
+  static const _presenceSweepInterval = Duration(seconds: 5);
 
   // ---------------------------------------------------------------------------
   // State
@@ -51,6 +57,21 @@ class FlutterMeshService implements MeshService {
   StreamController<UserProfile>? _peersHub;
 
   // ---------------------------------------------------------------------------
+  // Presence / out-of-range expiry
+  // ---------------------------------------------------------------------------
+  //
+  // A peer is "seen" either via a full profile push (discoveredPeers) or a
+  // lightweight presence heartbeat from native scan hits (no GATT connect — see
+  // MeshForegroundService.onPeerSeen). A periodic sweep expires anyone not seen
+  // within _presenceTimeout, so peers that genuinely went out of range disappear
+  // from the live list — while peers still in range keep refreshing their
+  // last-seen time via the heartbeat and never expire.
+  final Map<String, DateTime> _lastSeenAt = {};
+  StreamSubscription<dynamic>? _presenceSub;
+  Timer? _presenceSweepTimer;
+  final _expiredController = StreamController<String>.broadcast();
+
+  // ---------------------------------------------------------------------------
   // MeshService interface
   // ---------------------------------------------------------------------------
 
@@ -68,6 +89,7 @@ class FlutterMeshService implements MeshService {
           try {
             final peer = UserProfile.fromJson(_decodeEvent(event));
             _knownPeers[peer.deviceId] = peer;
+            _lastSeenAt[peer.deviceId] = DateTime.now();
             if (!_peersHub!.isClosed) _peersHub!.add(peer);
           } catch (e, st) {
             debugPrint('FlutterMeshService: peer parse error (dropped): $e\n$st');
@@ -119,16 +141,32 @@ class FlutterMeshService implements MeshService {
   Stream<int> get activePeerCount => _peerCountController.stream;
 
   @override
+  Stream<String> get peerExpired => _expiredController.stream;
+
+  @override
   Future<void> startMesh(UserProfile localProfile) async {
     if (_isRunning) return;
 
-    // RC-8: Only set _isRunning = true after the native call succeeds.
+    // RC-8 + presence-of-real-success fix: the native side can legitimately
+    // no-op a startMesh call (Bluetooth not yet enabled, e.g. right after
+    // app launch before the radio finishes powering on). It always used to
+    // ack the platform-channel call regardless, which made _isRunning = true
+    // even though nothing actually started — silently defeating the
+    // adapterState "on" self-heal retry in home_shell.dart for the rest of
+    // the session. Now the native call reports real success/failure, and
+    // _isRunning only flips true when the engine actually started, so a
+    // later retry (once Bluetooth is confirmed on) can succeed.
     try {
-      await _methodChannel.invokeMethod<void>(
+      final started = await _methodChannel.invokeMethod<bool>(
         'startMesh',
         {'profileJson': jsonEncode(localProfile.toJson())},
       );
-      _isRunning = true;
+      _isRunning = started ?? false;
+      if (!_isRunning) {
+        debugPrint('FlutterMeshService.startMesh: native did not actually start '
+            '(Bluetooth off or permissions missing) — caller should retry once ready');
+        return;
+      }
     } catch (e, st) {
       debugPrint('FlutterMeshService.startMesh failed: $e\n$st');
       _isRunning = false;
@@ -141,6 +179,36 @@ class FlutterMeshService implements MeshService {
     _peerCountSubscription = discoveredPeers.listen((profile) {
       if (_discoveredDeviceIds.add(profile.deviceId)) {
         _peerCountController.add(_discoveredDeviceIds.length);
+      }
+    });
+
+    // Presence heartbeat from native scan hits — refresh last-seen without a
+    // GATT reconnect, so peers still in range never expire.
+    _presenceSub = _presenceEventChannel.receiveBroadcastStream().listen(
+      (dynamic event) {
+        final deviceId = event is String ? event : event?.toString();
+        if (deviceId != null && deviceId.isNotEmpty) {
+          _lastSeenAt[deviceId] = DateTime.now();
+        }
+      },
+      onError: (Object e, StackTrace st) {
+        debugPrint('FlutterMeshService: presence stream error: $e');
+      },
+    );
+
+    // Periodic sweep: anyone unseen (no profile push, no heartbeat) for longer
+    // than the presence timeout is out of range — remove and notify.
+    _presenceSweepTimer?.cancel();
+    _presenceSweepTimer = Timer.periodic(_presenceSweepInterval, (_) {
+      final now = DateTime.now();
+      final expired = _knownPeers.keys.where((id) {
+        final lastSeen = _lastSeenAt[id];
+        return lastSeen == null || now.difference(lastSeen) > _presenceTimeout;
+      }).toList();
+      for (final id in expired) {
+        _knownPeers.remove(id);
+        _lastSeenAt.remove(id);
+        if (!_expiredController.isClosed) _expiredController.add(id);
       }
     });
   }
@@ -156,6 +224,12 @@ class FlutterMeshService implements MeshService {
     _peerCountSubscription = null;
     _discoveredDeviceIds.clear();
     _peerCountController.add(0);
+
+    await _presenceSub?.cancel();
+    _presenceSub = null;
+    _presenceSweepTimer?.cancel();
+    _presenceSweepTimer = null;
+    _lastSeenAt.clear();
   }
 
   @override
@@ -198,6 +272,7 @@ class FlutterMeshService implements MeshService {
   void dispose() {
     stopMesh();
     _peerCountController.close();
+    _expiredController.close();
   }
 
   // ---------------------------------------------------------------------------

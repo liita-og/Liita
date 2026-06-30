@@ -308,6 +308,29 @@ class DatabaseService {
     return matched;
   }
 
+  /// Device IDs the local user has waved at (WAVE_SENT events). Used to keep a
+  /// peer's radar card after they go offline / the app restarts.
+  Future<Set<String>> getWavedPeerIds(String localDeviceId) async {
+    final rows = await _database.query(
+      'match_events',
+      columns: ['target_id'],
+      where: 'actor_id = ? AND event_type = ?',
+      whereArgs: [localDeviceId, MatchEventType.waveSent.value],
+    );
+    return rows.map((r) => r['target_id'] as String).toSet();
+  }
+
+  /// Device IDs that have waved at the local user (WAVE_RECEIVED events).
+  Future<Set<String>> getWavedByIds(String localDeviceId) async {
+    final rows = await _database.query(
+      'match_events',
+      columns: ['actor_id'],
+      where: 'target_id = ? AND event_type = ?',
+      whereArgs: [localDeviceId, MatchEventType.waveReceived.value],
+    );
+    return rows.map((r) => r['actor_id'] as String).toSet();
+  }
+
   /// Returns `true` if a MATCH_CREATED event exists between local and peer.
   Future<bool> hasMatchCreated(String localDeviceId, String peerId) async {
     final rows = await _database.query(
@@ -380,12 +403,25 @@ class DatabaseService {
   }
 
   Future<void> markDelivered(String messageId) async {
+    final rows = await _database.query(
+      'messages',
+      columns: ['match_id'],
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
     await _database.update(
       'messages',
       {'delivered': 1},
       where: 'message_id = ?',
       whereArgs: [messageId],
     );
+    // Without this, the ARQ delivery ACK updates the DB but the chat screen's
+    // watchMessages stream never re-queries, so the sent-message tick silently
+    // never flips to "delivered" until something else happens to refresh it.
+    if (rows.isNotEmpty) {
+      _notifyMessageListeners(rows.first['match_id'] as String);
+    }
   }
 
   Future<void> markRead(String matchId) async {

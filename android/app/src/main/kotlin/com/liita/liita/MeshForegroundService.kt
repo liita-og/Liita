@@ -40,6 +40,14 @@ class MeshForegroundService : Service() {
         // Residual 2C fix: re-read a peer's profile at most this often, so we can close
         // the discovery connection without reconnecting on every scan callback.
         const val REPROFILE_INTERVAL_MS = 60_000L
+        // Advertising resilience: cap retries so a permanently-failing advertiser
+        // doesn't spin forever. Without retry, a transient advertise failure makes
+        // this device invisible to newcomers while it can still discover them.
+        const val MAX_ADVERTISE_RETRIES = 5
+        // Throttle for the presence heartbeat — scan hits for a nearby device can
+        // arrive multiple times a second; this caps how often we forward one to
+        // Dart per peer so the platform channel isn't flooded.
+        const val PRESENCE_EMIT_INTERVAL_MS = 5_000L
     }
 
     private val binder = LocalBinder()
@@ -59,6 +67,10 @@ class MeshForegroundService : Service() {
     private var localProfileJson: String = ""
     private var isRunning = false
     private var currentMode = 0 // 0=continuous, 1=foreground, 2=background
+
+    // Advertising resilience state (see startAdvertising / advertiseCallback).
+    @Volatile private var isAdvertising = false
+    private var advertiseRetries = 0
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var dutyCycleJob: Job? = null
@@ -86,6 +98,11 @@ class MeshForegroundService : Service() {
     // Callbacks to Flutter
     var onPeerDiscovered: ((String) -> Unit)? = null
     var onPacketReceived: ((String) -> Unit)? = null
+    // Presence heartbeat: fires (throttled) for an already-profiled peer on every
+    // scan hit, so Dart can tell "still in range" apart from "gone" without a
+    // GATT reconnect. See onScanResult / PRESENCE_EMIT_INTERVAL_MS.
+    var onPeerSeen: ((String) -> Unit)? = null
+    private val lastPresenceEmitAt = ConcurrentHashMap<String, Long>()
 
     inner class LocalBinder : Binder() {
         fun getService(): MeshForegroundService = this@MeshForegroundService
@@ -116,18 +133,31 @@ class MeshForegroundService : Service() {
         super.onDestroy()
     }
 
+    /// Starts the mesh engine. Returns true only if it actually started (or was
+    /// already running) — false if it bailed (no permissions, or Bluetooth not
+    /// yet enabled). The caller (MeshPlugin) reports this back to Dart so it
+    /// does NOT mark itself "running" on a no-op start.
+    ///
+    /// This matters because Bluetooth can still be off/not-yet-ready at app
+    /// launch (cold boot, or the OS hasn't finished powering the radio after
+    /// the app's own turnOn() request). Dart's self-heal listener retries
+    /// startMesh once the adapter reports "on" — but only if it correctly
+    /// knows the first attempt didn't actually start anything.
     @SuppressLint("MissingPermission")
-    fun startMesh(profileJson: String) {
+    fun startMesh(profileJson: String): Boolean {
         Log.d("LiitaBLE", "[LiitaBLE] startMesh() entered")
 
         val hasPerms = try { hasPermissions() } catch(e: Exception) { false }
         val isBtEnabled = try { bluetoothAdapter?.isEnabled } catch (e: Exception) { false }
         Log.d("LiitaBLE", "[LiitaBLE] hasPermissions=$hasPerms, bluetoothAdapter.isEnabled=$isBtEnabled")
 
-        if (!hasPermissions() || bluetoothAdapter?.isEnabled != true) return
-        if (isRunning) return
+        if (!hasPermissions() || bluetoothAdapter?.isEnabled != true) {
+            Log.w("LiitaBLE", "[LiitaBLE] startMesh aborted — not actually starting (caller should retry once ready)")
+            return false
+        }
+        if (isRunning) return true
 
-        try {
+        return try {
             val profile = JSONObject(profileJson)
             localDeviceId = profile.getString("deviceId")
             localProfileJson = profileJson
@@ -143,8 +173,10 @@ class MeshForegroundService : Service() {
             startAdvertising(profile)
             isRunning = true
             setContinuousMode() // Default to continuous scanning when started
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Error starting mesh", e)
+            false
         }
     }
 
@@ -156,6 +188,8 @@ class MeshForegroundService : Service() {
         sendJob?.cancel()   // RC-3: Stop any in-flight send job
         bluetoothLeScanner?.stopScan(scanCallback)
         bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+        isAdvertising = false
+        advertiseRetries = 0
         gattServer?.close()
         peerRegistry.clear()
         dedupCache.clear()
@@ -167,6 +201,7 @@ class MeshForegroundService : Service() {
         }
         connectingGatts.clear()
         lastProfiledAt.clear()   // Residual 2C fix
+        lastPresenceEmitAt.clear()
         pendingSendGatt.getAndSet(null)?.let { g ->        // FIX 2A: close any in-flight send GATT
             try { g.disconnect() } catch (_: Exception) {}
             try { g.close() } catch (_: Exception) {}
@@ -407,20 +442,22 @@ class MeshForegroundService : Service() {
             return
         }
 
-        // Rule 1: Dedup cache check
         val degree = dedupCache.recordAndGetDegree(packet.packetId)
-        if (degree > 1) {
-            Log.d("LiitaBLE", "[LiitaBLE] packet dropped (dedup): id=${packet.packetId}")
-            return
-        }
 
-        // Rule 3/4: Consume if destination matches or is broadcast
-        if (packet.destinationId == localDeviceId || packet.isBroadcast) {
+        // Consume (pass up to the Dart app layer):
+        //  - Unicast addressed to me: on EVERY sighting, so the app can re-ACK a
+        //    retransmitted duplicate whose original ACK was lost. The app dedups
+        //    by packetId before processing, so it still handles it exactly once.
+        //  - Broadcast: only the first sighting (the app dedups anyway).
+        if (packet.destinationId == localDeviceId) {
+            onPacketReceived?.invoke(jsonStr)
+        } else if (packet.isBroadcast && degree == 1) {
             onPacketReceived?.invoke(jsonStr)
         }
 
-        // Forward to relay controller for TTL/Jitter logic — but NOT unicast packets addressed to us
-        if (packet.destinationId != localDeviceId) {
+        // Relay (TTL/jitter) only on first sighting; never relay packets
+        // addressed to me. Duplicates (degree > 1) are suppressed here.
+        if (packet.destinationId != localDeviceId && degree == 1) {
             Log.d("LiitaBLE", "[LiitaBLE] packet relayed: id=${packet.packetId}")
             relayController.processForRelay(packet)
         }
@@ -553,10 +590,47 @@ class MeshForegroundService : Service() {
 
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+            isAdvertising = true
+            advertiseRetries = 0
             Log.d("LiitaBLE", "[LiitaBLE] advertising started success")
         }
         override fun onStartFailure(errorCode: Int) {
+            isAdvertising = false
             Log.e("LiitaBLE", "[LiitaBLE] advertiser start failure: errorCode=$errorCode")
+            // Without recovery, a failed advertiser leaves this device able to
+            // discover others but invisible to newcomers (asymmetric discovery).
+            // Retry transient failures with linear backoff; ALREADY_STARTED means
+            // we are in fact advertising, and FEATURE_UNSUPPORTED can't be fixed.
+            if (errorCode == AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED) {
+                isAdvertising = true
+                return
+            }
+            if (errorCode == AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED) return
+            if (advertiseRetries >= MAX_ADVERTISE_RETRIES) {
+                Log.e("LiitaBLE", "[LiitaBLE] advertising gave up after $advertiseRetries retries")
+                return
+            }
+            advertiseRetries++
+            scope.launch {
+                delay(2000L * advertiseRetries)
+                if (isRunning && !isAdvertising && hasPermissions()) {
+                    Log.w("LiitaBLE", "[LiitaBLE] retrying advertising (attempt $advertiseRetries)")
+                    restartAdvertising()
+                }
+            }
+        }
+    }
+
+    /// Stops and restarts the advertiser from the persisted local profile.
+    /// Used to recover from an advertise failure so the device stays discoverable.
+    @SuppressLint("MissingPermission")
+    private fun restartAdvertising() {
+        if (!isRunning || !hasPermissions() || localProfileJson.isEmpty()) return
+        try { bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) } catch (_: Exception) {}
+        try {
+            startAdvertising(JSONObject(localProfileJson))
+        } catch (e: Exception) {
+            Log.e(TAG, "[LiitaBLE] restartAdvertising failed", e)
         }
     }
 
@@ -666,6 +740,18 @@ class MeshForegroundService : Service() {
 
             val uuids = result.scanRecord?.serviceUuids?.joinToString { it.uuid.toString() } ?: "none"
             Log.d("LiitaBLE", "[LiitaBLE] scan callback hit: device=$address, uuids=$uuids")
+
+            // Presence heartbeat: a scan hit means this device is in range RIGHT
+            // NOW, independent of the (much rarer) GATT profile re-read. Only for
+            // peers we've already profiled at least once (have a deviceId).
+            peerRegistry.getDeviceIdForAddress(address)?.let { deviceId ->
+                val now = System.currentTimeMillis()
+                val last = lastPresenceEmitAt[address] ?: 0L
+                if (now - last > PRESENCE_EMIT_INTERVAL_MS) {
+                    lastPresenceEmitAt[address] = now
+                    onPeerSeen?.invoke(deviceId)
+                }
+            }
 
             // Bug 3 fix: skip if already connecting or already connected
             if (connectingDevices.containsKey(address)) {
@@ -780,16 +866,23 @@ class MeshForegroundService : Service() {
         ) {
             val address = gatt.device.address
             if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == PROFILE_CHAR_UUID) {
-                val value = characteristic.value ?: return
-                val profileJson = String(value, Charsets.UTF_8)
-                Log.d("LiitaBLE", "[LiitaBLE] characteristic read from $address: ${profileJson.take(80)}...")
-                if (peerRegistry.updatePeerProfile(address, profileJson)) {
-                    val deviceId = try { JSONObject(profileJson).getString("deviceId") } catch (e: Exception) { address }
-                    Log.d("LiitaBLE", "[LiitaBLE] peer discovered via GATT read: $deviceId")
-                    onPeerDiscovered?.invoke(profileJson)
-                    lastProfiledAt[address] = System.currentTimeMillis()   // Residual 2C fix
-                    try { gatt.disconnect() } catch (_: Exception) {}        // free the connection slot
+                val value = characteristic.value
+                if (value != null) {
+                    val profileJson = String(value, Charsets.UTF_8)
+                    Log.d("LiitaBLE", "[LiitaBLE] characteristic read from $address: ${profileJson.take(80)}...")
+                    // Emit only when new/changed — Dart dedups by deviceId anyway.
+                    if (peerRegistry.updatePeerProfile(address, profileJson)) {
+                        val deviceId = try { JSONObject(profileJson).getString("deviceId") } catch (e: Exception) { address }
+                        Log.d("LiitaBLE", "[LiitaBLE] peer discovered via GATT read: $deviceId")
+                        onPeerDiscovered?.invoke(profileJson)
+                    }
                 }
+                // Always record the profile time and free the connection slot after a
+                // successful read — even if the profile was unchanged. Previously this
+                // ran only on a changed profile, leaking the GATT connection and
+                // skipping the 60s reprofile guard (→ reconnect churn → status 133).
+                lastProfiledAt[address] = System.currentTimeMillis()
+                try { gatt.disconnect() } catch (_: Exception) {}
             } else {
                 Log.e("LiitaBLE", "[LiitaBLE] characteristic read failed for $address, status=$status")
             }

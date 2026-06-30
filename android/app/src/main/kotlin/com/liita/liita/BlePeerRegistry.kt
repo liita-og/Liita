@@ -21,6 +21,11 @@ class BlePeerRegistry {
     // FIX 2D: Map logical deviceId → BluetoothDevice for unicast routing
     private val deviceIdToDevice = ConcurrentHashMap<String, BluetoothDevice>()
 
+    // Reverse of deviceIdToDevice — MAC → logical deviceId. Lets a raw scan hit
+    // (which only has a MAC) be attributed to a deviceId for presence pings,
+    // without doing a GATT connect/read.
+    private val addressToDeviceId = ConcurrentHashMap<String, String>()
+
     fun addConnection(gatt: BluetoothGatt) {
         connectedGatts[gatt.device.address] = gatt
     }
@@ -50,6 +55,7 @@ class BlePeerRegistry {
                 try {
                     val deviceId = JSONObject(profileJson).getString("deviceId")
                     deviceIdToDevice[deviceId] = device
+                    addressToDeviceId[macAddress] = deviceId
                 } catch (_: Exception) {}
             }
             return true
@@ -59,6 +65,9 @@ class BlePeerRegistry {
 
     /** FIX 2D: Look up a device by its logical deviceId (from profile JSON). */
     fun getDeviceById(deviceId: String): BluetoothDevice? = deviceIdToDevice[deviceId]
+
+    /** Look up the logical deviceId already profiled for a MAC, if any. */
+    fun getDeviceIdForAddress(address: String): String? = addressToDeviceId[address]
 
     fun clear() {
         for (gatt in connectedGatts.values) {
@@ -71,5 +80,6 @@ class BlePeerRegistry {
         discoveredPeers.clear()
         knownDevices.clear()
         deviceIdToDevice.clear()
+        addressToDeviceId.clear()
     }
 }

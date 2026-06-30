@@ -25,12 +25,14 @@ class MeshPlugin(private val context: Context, flutterEngine: FlutterEngine) : M
     private val methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.liita.app/mesh")
     private val peersChannel = EventChannel(flutterEngine.dartExecutor.binaryMessenger, "com.liita.app/peers")
     private val packetsChannel = EventChannel(flutterEngine.dartExecutor.binaryMessenger, "com.liita.app/packets")
+    private val presenceChannel = EventChannel(flutterEngine.dartExecutor.binaryMessenger, "com.liita.app/presence")
 
     private var meshService: MeshForegroundService? = null
     private var isBound = false
 
     private var peersSink: EventChannel.EventSink? = null
     private var packetsSink: EventChannel.EventSink? = null
+    private var presenceSink: EventChannel.EventSink? = null
 
     // RC-5: Queue method calls that arrive before the service bind completes.
     private val pendingCalls = ArrayDeque<Pair<MethodCall, Result>>()
@@ -72,6 +74,15 @@ class MeshPlugin(private val context: Context, flutterEngine: FlutterEngine) : M
             }
         })
 
+        presenceChannel.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                presenceSink = events
+            }
+            override fun onCancel(arguments: Any?) {
+                presenceSink = null
+            }
+        })
+
         // Bind the service so it's ready, but don't start it as foreground until startMesh is called
         val intent = Intent(context, MeshForegroundService::class.java)
         context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -83,6 +94,9 @@ class MeshPlugin(private val context: Context, flutterEngine: FlutterEngine) : M
         }
         meshService?.onPacketReceived = { packetJson ->
             mainHandler.post { packetsSink?.success(packetJson) }
+        }
+        meshService?.onPeerSeen = { deviceId ->
+            mainHandler.post { presenceSink?.success(deviceId) }
         }
     }
 
@@ -116,8 +130,10 @@ class MeshPlugin(private val context: Context, flutterEngine: FlutterEngine) : M
                     } else {
                         context.startService(intent)
                     }
-                    meshService?.startMesh(profileJson)
-                    result.success(null)
+                    // Report whether the engine actually started — Dart must NOT
+                    // believe the mesh is running on a no-op (e.g. BT was off).
+                    val started = meshService?.startMesh(profileJson) ?: false
+                    result.success(started)
                 } else {
                     result.error("INVALID_ARG", "profileJson is required", null)
                 }

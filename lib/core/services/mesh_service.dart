@@ -22,6 +22,14 @@ abstract class MeshService {
   /// Stream of incoming packets (waves, messages, broadcasts) from peers.
   Stream<MeshPacket> get incomingPackets;
 
+  /// Emits a peer's [UserProfile.deviceId] when they are considered out of
+  /// range — no scan/profile activity seen from them for the presence timeout.
+  /// Consumers (e.g. the radar list) should remove that peer from any "live"
+  /// view, but a UI layer is free to keep showing them anyway (e.g. because the
+  /// local user previously waved at them) by reading from its own persisted
+  /// state rather than this stream.
+  Stream<String> get peerExpired;
+
   /// Sends a [packet] over the mesh to the designated receiver.
   Future<void> sendPacket(MeshPacket packet);
 

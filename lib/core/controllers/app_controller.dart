@@ -20,6 +20,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:liita/core/models/game_message.dart';
 import 'package:liita/core/providers/game_provider.dart';
+import 'package:liita/core/providers/alert_provider.dart';
+
+/// A reliable unicast packet awaiting acknowledgement from its destination.
+class _PendingSend {
+  final MeshPacket packet;
+  final String? messageId; // text only: flips the chat "delivered" flag on ACK
+  int attempts;
+  int nextRetryAtMs;
+  _PendingSend(this.packet, this.messageId, this.attempts, this.nextRetryAtMs);
+}
 
 /// Central packet routing engine for the Liita BLE mesh network.
 ///
@@ -73,6 +83,17 @@ class AppController {
   final List<MeshPacket> _incomingQueue = [];
   bool _isProcessingQueue = false;
 
+  // ── Reliable delivery (ARQ) ──
+  // Unicast packets awaiting an ACK from their destination, keyed by packetId.
+  // The mesh is best-effort, so each reliable packet is retransmitted (with the
+  // same packetId, which the receiver dedups) until it is acknowledged or the
+  // attempt budget is exhausted.
+  final Map<String, _PendingSend> _pendingSends = {};
+  Timer? _retryTimer;
+  bool _isRetrying = false;
+  static const int _retryBaseMs = 3000; // grows linearly per attempt
+  static const int _retryMaxAttempts = 5;
+
   static const _uuid = Uuid();
 
   AppController({
@@ -121,6 +142,9 @@ class AppController {
     _peerNameCache.clear();
     _incomingQueue.clear();
     _isProcessingQueue = false;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _pendingSends.clear();
   }
 
   // ===========================================================================
@@ -148,17 +172,26 @@ class AppController {
 
   /// Entry point for every incoming packet from the mesh.
   ///
-  /// Enforces the two regression invariants before dispatching:
+  /// Invariants:
   /// 1. Drop if originId == localDeviceId (never process own packets).
-  /// 2. Drop if packetId already seen (dedup-first).
+  /// 2. ACK every reliable unicast addressed to us — including duplicates — so
+  ///    the sender's retransmit loop terminates even if an earlier ACK was lost.
+  /// 3. Run the handler only on first sighting (dedup) — process exactly once.
   Future<void> _onPacketReceived(MeshPacket packet) async {
     try {
       // ── CONTRACT 1: Never process own originated packets ──
       if (packet.originId == _localDeviceId) return;
 
-      // ── CONTRACT 2: Dedup check FIRST ──
-      // RC-9: Use an atomic markIfUnseen that returns false if already recorded.
-      // This eliminates the TOCTOU window between isPacketSeen and markPacketSeen.
+      // ── ACK-ALWAYS: reliable unicast addressed to us is acknowledged on
+      // every receipt, before the dedup gate, so retransmitted duplicates
+      // (whose original ACK was lost) still get acknowledged.
+      if (packet.destinationId == _localDeviceId &&
+          _isReliable(packet.payloadType)) {
+        await _sendAck(packet.packetId, packet.originId);
+      }
+
+      // ── CONTRACT 3: Dedup — process exactly once.
+      // RC-9: atomic markIfUnseen returns false if already recorded.
       final isNew = await _db.markPacketSeenIfNew(packet.packetId);
       if (!isNew) return;
 
@@ -206,23 +239,25 @@ class AppController {
       timestamp: DateTime.now().millisecondsSinceEpoch,
     ));
 
-    // Fire notification
-    final senderName = await _getPeerName(packet.originId);
-    await _notifications.showWaveNotification(senderName);
-
-    // Update wavedByProvider through a new callback if we have one, or just update state directly from UI.
-    // We will fire a general callback if needed, but since AppController doesn't have ref,
-    // we assume UI polling or stream handles it.
-
     // Store their public key from the wave data field (needed for key exchange)
     if (packet.data.isNotEmpty) {
       await _storeRemotePublicKey(packet.originId, packet.data);
     }
 
-    // Check for mutual wave → auto-create match
+    // Check for mutual wave → auto-create match (which fires the "connected"
+    // notification). Otherwise, notify that this peer waved at us.
     final weWavedFirst = await _db.hasWaveSent(_localDeviceId, packet.originId);
     if (weWavedFirst) {
       await _createMatch(packet.originId);
+    } else {
+      final senderName = await _getPeerName(packet.originId);
+      await _notifications.showWaveNotification(senderName);
+      // Surface an in-app banner too (complements the system notification).
+      _ref.read(incomingAlertProvider.notifier).state = RadarAlert(
+        kind: RadarAlertKind.wave,
+        peerId: packet.originId,
+        peerName: senderName,
+      );
     }
   }
 
@@ -292,15 +327,7 @@ class AppController {
     );
     await _db.insertMessage(message);
 
-    // Send ACK back to sender
-    await _mesh.sendPacket(MeshPacket(
-      packetId: const Uuid().v4(),
-      originId: _localDeviceId,
-      destinationId: packet.originId,
-      payloadType: PayloadType.ack,
-      data: message.messageId,
-      timestamp: DateTime.now().millisecondsSinceEpoch,
-    ));
+    // (The ACK is sent centrally in _onPacketReceived for all reliable types.)
 
     // Fire notification
     final senderName = await _getPeerName(packet.originId);
@@ -375,11 +402,18 @@ class AppController {
   // HANDLER: ACK (delivery confirmation)
   // ===========================================================================
 
-  /// Marks the referenced message as delivered.
+  /// Resolves a reliable send: the ACK's data carries the original packetId.
+  /// Clears it from the retransmit table and, for text, flips the delivered flag.
   Future<void> _handleAck(MeshPacket packet) async {
-    final messageId = packet.data;
-    if (messageId.isNotEmpty) {
-      await _db.markDelivered(messageId);
+    final ackedPacketId = packet.data;
+    if (ackedPacketId.isEmpty) return;
+    final pending = _pendingSends.remove(ackedPacketId);
+    if (pending?.messageId != null) {
+      await _db.markDelivered(pending!.messageId!);
+    }
+    if (_pendingSends.isEmpty) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
     }
   }
 
@@ -551,6 +585,75 @@ class AppController {
   }
 
   // ===========================================================================
+  // RELIABLE DELIVERY (ARQ) — used for unicast wave/waveAccept/text
+  // ===========================================================================
+
+  /// Payload types that are delivered reliably (sender retransmits until ACKed,
+  /// receiver ACKs every receipt). Broadcast/profileSync/photoChunk/game and the
+  /// ack itself are excluded.
+  static bool _isReliable(PayloadType t) =>
+      t == PayloadType.wave ||
+      t == PayloadType.waveAccept ||
+      t == PayloadType.text;
+
+  /// Sends [packet] and keeps retransmitting it (same packetId — the receiver
+  /// dedups, so it is processed once but ACKed every time) until the
+  /// destination acknowledges it or the attempt budget is exhausted.
+  Future<void> _sendReliable(MeshPacket packet, {String? messageId}) async {
+    _pendingSends[packet.packetId] = _PendingSend(
+      packet,
+      messageId,
+      1,
+      DateTime.now().millisecondsSinceEpoch + _retryBaseMs,
+    );
+    _retryTimer ??=
+        Timer.periodic(const Duration(seconds: 1), (_) => _runRetries());
+    await _mesh.sendPacket(packet);
+  }
+
+  Future<void> _runRetries() async {
+    if (_isRetrying) return;
+    _isRetrying = true;
+    try {
+      if (_pendingSends.isEmpty) {
+        _retryTimer?.cancel();
+        _retryTimer = null;
+        return;
+      }
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final id in _pendingSends.keys.toList()) {
+        final p = _pendingSends[id];
+        if (p == null || now < p.nextRetryAtMs) continue;
+        if (p.attempts >= _retryMaxAttempts) {
+          _pendingSends.remove(id);
+          debugPrint(
+              'AppController: reliable ${p.packet.payloadType.name} ${id.substring(0, 8)} unacked after ${p.attempts} attempts — giving up');
+          continue;
+        }
+        p.attempts++;
+        p.nextRetryAtMs = now + _retryBaseMs * p.attempts;
+        await _mesh.sendPacket(p.packet);
+      }
+    } finally {
+      _isRetrying = false;
+    }
+  }
+
+  /// Acknowledges receipt of [packetId] back to its origin (fire-and-forget;
+  /// ACKs are not themselves ARQ'd — a lost ACK is recovered by the sender's
+  /// next retransmit, which is ACKed again).
+  Future<void> _sendAck(String packetId, String toId) async {
+    await _mesh.sendPacket(MeshPacket(
+      packetId: _uuid.v4(),
+      originId: _localDeviceId,
+      destinationId: toId,
+      payloadType: PayloadType.ack,
+      data: packetId,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+    ));
+  }
+
+  // ===========================================================================
   // OUTBOUND ACTIONS (called by UI)
   // ===========================================================================
 
@@ -600,9 +703,9 @@ class AppController {
       return;
     }
 
-    // Send wave packet
-    await _mesh.sendPacket(MeshPacket(
-      packetId: const Uuid().v4(),
+    // Send wave packet (reliable — retransmitted until the peer ACKs).
+    await _sendReliable(MeshPacket(
+      packetId: _uuid.v4(),
       originId: _localDeviceId,
       destinationId: targetId,
       payloadType: PayloadType.wave,
@@ -624,8 +727,8 @@ class AppController {
   /// Sends a waveAccept packet to [targetId], carrying our public key.
   /// Called when a mutual wave is detected at send-time (race-condition fix).
   Future<void> _sendWaveAccept(String targetId, String publicKeyBase64) async {
-    await _mesh.sendPacket(MeshPacket(
-      packetId: const Uuid().v4(),
+    await _sendReliable(MeshPacket(
+      packetId: _uuid.v4(),
       originId: _localDeviceId,
       destinationId: targetId,
       payloadType: PayloadType.waveAccept,
@@ -672,15 +775,19 @@ class AppController {
     );
     await _db.insertMessage(message);
 
-    // Send over mesh (encrypted payload)
-    await _mesh.sendPacket(MeshPacket(
-      packetId: _uuid.v4(),
-      originId: _localDeviceId,
-      destinationId: peerId,
-      payloadType: PayloadType.text,
-      data: dataPayload,
-      timestamp: message.timestamp,
-    ));
+    // Send over mesh (encrypted payload), reliably — retransmitted until the
+    // peer ACKs, at which point the message is flagged delivered.
+    await _sendReliable(
+      MeshPacket(
+        packetId: _uuid.v4(),
+        originId: _localDeviceId,
+        destinationId: peerId,
+        payloadType: PayloadType.text,
+        data: dataPayload,
+        timestamp: message.timestamp,
+      ),
+      messageId: message.messageId,
+    );
   }
 
   /// Sends a broadcast message to the Lounge (destination = '*').
@@ -761,10 +868,16 @@ class AppController {
     // Notify the matches stream so matchesProvider updates live.
     _db.notifyMatchesChanged(_localDeviceId);
 
-    // Fire match notification
+    // Fire match notification + in-app banner
     final peerName = await _getPeerName(peerId);
     await _notifications.showMatchNotification(peerName);
-    
+    _ref.read(incomingAlertProvider.notifier).state = RadarAlert(
+      kind: RadarAlertKind.match,
+      peerId: peerId,
+      peerName: peerName,
+      matchId: matchId,
+    );
+
     if (_onMatchCreated == null) {
       debugPrint('[AppController] WARNING: onMatchCreated is null at match creation time. Queueing peerId: $peerId');
       _pendingMatches.add(peerId);

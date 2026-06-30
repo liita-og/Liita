@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:liita/core/models/user_profile.dart';
 import 'package:liita/core/models/chat_message.dart';
@@ -58,18 +60,53 @@ final onboardingCompleteProvider = StateProvider<bool>((ref) => false);
 // Peers (live from mesh)
 // ---------------------------------------------------------------------------
 
+/// Live (currently in-range) discovered peers. A peer is added/updated on
+/// every profile push and removed when [MeshService.peerExpired] fires (no
+/// scan/profile activity for the presence timeout — i.e. genuinely out of
+/// range). Peers the local user has waved at are kept visible regardless via
+/// [wavedPeerProfilesProvider], merged in by the radar screen — this provider
+/// only reflects current reachability.
 final peersProvider = StreamProvider<List<UserProfile>>((ref) {
   final mesh = ref.watch(meshServiceProvider);
   final peers = <String, UserProfile>{};
+  final controller = StreamController<List<UserProfile>>();
 
-  return mesh.discoveredPeers.map((newPeer) {
+  final addSub = mesh.discoveredPeers.listen((newPeer) {
     peers[newPeer.deviceId] = newPeer;
-    return peers.values.toList();
+    if (!controller.isClosed) controller.add(peers.values.toList());
   });
+  final expireSub = mesh.peerExpired.listen((deviceId) {
+    if (peers.remove(deviceId) != null && !controller.isClosed) {
+      controller.add(peers.values.toList());
+    }
+  });
+
+  ref.onDispose(() {
+    addSub.cancel();
+    expireSub.cancel();
+    controller.close();
+  });
+
+  return controller.stream;
 });
 
 final activePeerCountProvider = StreamProvider<int>((ref) {
   return ref.watch(meshServiceProvider).activePeerCount;
+});
+
+/// Profiles of peers the local user has waved at, loaded from the DB so their
+/// radar card persists even after the peer goes offline or the app restarts.
+/// Recomputes whenever [wavedAtProvider] changes.
+final wavedPeerProfilesProvider = FutureProvider<List<UserProfile>>((ref) async {
+  final wavedIds = ref.watch(wavedAtProvider);
+  if (wavedIds.isEmpty) return const <UserProfile>[];
+  final db = ref.watch(databaseServiceProvider);
+  final profiles = <UserProfile>[];
+  for (final id in wavedIds) {
+    final p = await db.getProfile(id);
+    if (p != null) profiles.add(p);
+  }
+  return profiles;
 });
 
 // ---------------------------------------------------------------------------
