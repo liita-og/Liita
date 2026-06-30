@@ -90,11 +90,6 @@ class MeshForegroundService : Service() {
     // Residual 2C fix: MAC -> last time we successfully read its profile.
     private val lastProfiledAt = ConcurrentHashMap<String, Long>()
 
-    // Bug 6 fix: Serial GATT write queue
-    private data class WriteRequest(val gatt: BluetoothGatt, val payload: ByteArray)
-    private val writeQueue = ConcurrentLinkedQueue<WriteRequest>()
-    @Volatile private var isWriting = false
-
     // Callbacks to Flutter
     var onPeerDiscovered: ((String) -> Unit)? = null
     var onPacketReceived: ((String) -> Unit)? = null
@@ -206,8 +201,6 @@ class MeshForegroundService : Service() {
             try { g.disconnect() } catch (_: Exception) {}
             try { g.close() } catch (_: Exception) {}
         }
-        writeQueue.clear()
-        isWriting = false
         sendQueue.clear()   // RC-3: Drain send queue on stop
 
         isRunning = false
@@ -494,41 +487,6 @@ class MeshForegroundService : Service() {
             }
         } else {
             for (device in peerRegistry.getAllKnownDevices()) { enqueueSend(device, payloadBytes) }
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun drainWriteQueue() {
-        if (isWriting) return
-        val request = writeQueue.poll() ?: return
-        isWriting = true
-
-        mainHandler.post {
-            try {
-                val service = request.gatt.getService(SERVICE_UUID)
-                val char = service?.getCharacteristic(PROFILE_CHAR_UUID)
-                if (char != null && hasPermissions()) {
-                    char.value = request.payload
-                    char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    val success = request.gatt.writeCharacteristic(char)
-                    Log.d("LiitaBLE", "[LiitaBLE] write dispatched to ${request.gatt.device.address}, success=$success")
-                    if (!success) {
-                        // Write failed immediately — advance to next
-                        Log.e("LiitaBLE", "[LiitaBLE] writeCharacteristic returned false for ${request.gatt.device.address}")
-                        isWriting = false
-                        drainWriteQueue()
-                    }
-                    // On success, onCharacteristicWrite callback will call drainWriteQueue
-                } else {
-                    Log.e("LiitaBLE", "[LiitaBLE] write skipped — service/char null for ${request.gatt.device.address}")
-                    isWriting = false
-                    drainWriteQueue()
-                }
-            } catch (e: Exception) {
-                Log.e("LiitaBLE", "[LiitaBLE] write exception for ${request.gatt.device.address}", e)
-                isWriting = false
-                drainWriteQueue()
-            }
         }
     }
 
@@ -888,21 +846,11 @@ class MeshForegroundService : Service() {
             }
         }
 
-        // Bug 6 fix: advance write queue after each completed write
-        override fun onCharacteristicWrite(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-            status: Int
-        ) {
-            val address = gatt.device.address
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d("LiitaBLE", "[LiitaBLE] write completed for $address")
-            } else {
-                Log.e("LiitaBLE", "[LiitaBLE] write failed for $address, status=$status")
-            }
-            isWriting = false
-            drainWriteQueue()
-        }
+        // This discovery-connection callback never issues a characteristic write
+        // (it only connects → discoverServices → readCharacteristic — see
+        // onServicesDiscovered above); unicast sends use their own per-task
+        // callback in buildSendCallback(). No onCharacteristicWrite override
+        // needed here.
     }
 
     // -------------------------------------------------------------------------
