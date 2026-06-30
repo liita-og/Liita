@@ -21,16 +21,22 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
     with SingleTickerProviderStateMixin {
 
   static const int _questionSeconds = 15;
-  static const int _absoluteTimeoutSeconds = 20;
+  static const int _waitWatchdogSeconds = 20;
 
   // Question countdown
   Timer? _questionTimer;
-  Timer? _absoluteTimer;
   int _secondsLeft = _questionSeconds;
   bool _timerExpiredHandled = false;
 
   // Result auto-advance
   Timer? _resultTimer;
+
+  // Watchdog for the three "waiting on a packet from the peer" phases
+  // (host: waitingForOpponent; opponent: waitingForQuestion/waitingForResult).
+  // Game packets aren't ARQ'd (only wave/match/text are), so a single dropped
+  // BLE write would otherwise strand this screen forever with no escape.
+  Timer? _waitWatchdog;
+  bool _stalled = false;
 
   // Which option the player tapped (for visual feedback)
   int? _tappedIndex;
@@ -49,7 +55,7 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
   @override
   void dispose() {
     _questionTimer?.cancel();
-    _absoluteTimer?.cancel();
+    _waitWatchdog?.cancel();
     _resultTimer?.cancel();
     _timerAnim.dispose();
     super.dispose();
@@ -59,9 +65,10 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
 
   void _startQuestionTimer() {
     _questionTimer?.cancel();
-    _absoluteTimer?.cancel();
+    _waitWatchdog?.cancel();
     _timerExpiredHandled = false;
     _tappedIndex = null;
+    _stalled = false;
 
     setState(() => _secondsLeft = _questionSeconds);
     _timerAnim.forward(from: 0.0);
@@ -74,37 +81,56 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
         _onTimerExpired();
       }
     });
+  }
 
-    // HOST absolute timeout: 20s total (15s + 5s grace for opponent packet)
-    final state = ref.read(triviaGameProvider);
-    if (state?.isHost == true) {
-      _absoluteTimer = Timer(
-          const Duration(seconds: _absoluteTimeoutSeconds), _onAbsoluteTimeout);
-    }
+  /// Starts (or restarts) the watchdog for a "waiting on the peer" phase.
+  /// On fire: the host force-scores a silent opponent; the opponent — who has
+  /// no way to force anything — is shown a recovery card with an exit path.
+  void _startWaitWatchdog() {
+    _waitWatchdog?.cancel();
+    _waitWatchdog = Timer(
+        const Duration(seconds: _waitWatchdogSeconds), _onWaitWatchdogFired);
   }
 
   void _stopTimers() {
     _questionTimer?.cancel();
-    _absoluteTimer?.cancel();
+    _waitWatchdog?.cancel();
     _timerAnim.stop();
   }
 
   void _onTimerExpired() {
     if (_timerExpiredHandled) return;
     _timerExpiredHandled = true;
-    _stopTimers();
-    final answerToSend = ref.read(triviaGameProvider.notifier).onTimerExpired();
-    if (answerToSend != null) _sendAnswerPacket(answerToSend);
+    _questionTimer?.cancel();
+    _timerAnim.stop();
+    final result = ref.read(triviaGameProvider.notifier).onTimerExpired();
+    if (result.answerIndexToSend != null) {
+      _sendAnswerPacket(result.answerIndexToSend!);
+    } else if (result.resultToSend != null) {
+      _sendResultPacket(result.resultToSend!);
+    }
   }
 
-  void _onAbsoluteTimeout() {
+  void _onWaitWatchdogFired() {
+    if (!mounted) return;
     final state = ref.read(triviaGameProvider);
-    if (state == null || !state.isHost) return;
-    final resultPayload =
-        ref.read(triviaGameProvider.notifier).forceOpponentTimeout();
-    if (resultPayload != null) {
-      _sendResultPacket(resultPayload);
-      _startResultTimer();
+    if (state == null) return;
+    switch (state.phase) {
+      case TriviaPhase.waitingForOpponent:
+        // HOST: opponent's answer never arrived — force-score them as timed out.
+        final resultPayload =
+            ref.read(triviaGameProvider.notifier).forceOpponentTimeout();
+        if (resultPayload != null) _sendResultPacket(resultPayload);
+        break;
+      case TriviaPhase.waitingForQuestion:
+      case TriviaPhase.waitingForResult:
+        // OPPONENT: the host's packet never arrived. There's no "request
+        // retransmit" in the wire protocol, so surface a stalled state with
+        // an exit path instead of hanging forever.
+        setState(() => _stalled = true);
+        break;
+      default:
+        break; // a legitimate transition already happened; nothing to do
     }
   }
 
@@ -155,13 +181,16 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
   void _sendQuestionPacket(Map<String, dynamic> question, int index) {
     final state = ref.read(triviaGameProvider);
     if (state == null) return;
+    // Strip the correct-answer index before it goes over the wire — the
+    // opponent must not learn it until the result is revealed.
+    final sanitized = Map<String, dynamic>.from(question)..remove('answer');
     ref.read(appControllerProvider).sendGameMessage(
       state.opponentId,
       GameMessage(
         gameId: state.gameId,
         gameType: GameType.trivia,
         type: GameMessageType.question,
-        payload: {'question': question, 'index': index},
+        payload: {'question': sanitized, 'index': index},
       ),
     );
   }
@@ -202,15 +231,19 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
   void _onAnswerTapped(int index) {
     _stopTimers();
     setState(() => _tappedIndex = index);
-    final answerToSend =
-        ref.read(triviaGameProvider.notifier).submitAnswer(index);
-    if (answerToSend != null) {
-      // Opponent: send to host
-      _sendAnswerPacket(answerToSend);
+    final result = ref.read(triviaGameProvider.notifier).submitAnswer(index);
+    if (result.answerIndexToSend != null) {
+      // Opponent: send our answer to the host.
+      _sendAnswerPacket(result.answerIndexToSend!);
+    } else if (result.resultToSend != null) {
+      // Host answered second (opponent's answer had already arrived) — the
+      // notifier already scored and flipped phase to showingResult locally;
+      // send the result so the opponent's screen doesn't hang waiting for it.
+      _sendResultPacket(result.resultToSend!);
     }
-    // Host: wait for result via AppController._handleTrivia → onAnswerReceived
-    // If host and both answers in, AppController already sent result; we just
-    // need to watch for phase change to showingResult.
+    // Otherwise (host, opponent hasn't answered yet): wait for result via
+    // AppController._handleTrivia → onAnswerReceived, which sends it when
+    // the opponent's answer eventually arrives.
   }
 
   // ── Watch phase changes ────────────────────────────────────────────────────
@@ -235,7 +268,10 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
       case TriviaPhase.waitingForQuestion:
       case TriviaPhase.waitingForOpponent:
       case TriviaPhase.waitingForResult:
-        _stopTimers();
+        _questionTimer?.cancel();
+        _timerAnim.stop();
+        _stalled = false;
+        _startWaitWatchdog();
         break;
       case TriviaPhase.finished:
         _stopTimers();
@@ -319,6 +355,11 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
   }
 
   Widget _buildBody(TriviaGameState state) {
+    if (_stalled &&
+        (state.phase == TriviaPhase.waitingForQuestion ||
+            state.phase == TriviaPhase.waitingForResult)) {
+      return _buildStalled(state);
+    }
     switch (state.phase) {
       case TriviaPhase.waitingForAccept:
         return _buildWaiting('Waiting for ${state.opponentName} to accept...');
@@ -360,6 +401,47 @@ class _TriviaScreenState extends ConsumerState<TriviaScreen>
             textAlign: TextAlign.center,
           ),
         ],
+      ),
+    );
+  }
+
+  /// Shown when the wait-watchdog fires while we have no way to force a
+  /// recovery ourselves (we're the opponent, waiting on the host's question
+  /// or result). Game packets aren't ARQ'd, so a single dropped BLE write
+  /// otherwise hangs this screen forever with no way out.
+  Widget _buildStalled(TriviaGameState state) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.wifi_off_rounded, color: AppColors.error, size: 36),
+            const SizedBox(height: 16),
+            const Text(
+              'Connection lost',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "The next packet from ${state.opponentName} never arrived.",
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.textTertiary, fontSize: 14),
+            ),
+            const SizedBox(height: 24),
+            OutlinedButton(
+              onPressed: () {
+                ref.read(triviaGameProvider.notifier).reset();
+                context.go('/matches');
+              },
+              child: const Text('Exit'),
+            ),
+          ],
+        ),
       ),
     );
   }

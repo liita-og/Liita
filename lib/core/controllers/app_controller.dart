@@ -525,6 +525,10 @@ class AppController {
         // HOST receives this — transition to answering and send first question.
         final firstQuestion = notifier.onAcceptReceived();
         if (firstQuestion != null) {
+          // Strip the correct-answer index before it goes over the wire — the
+          // opponent must not learn it until the result is revealed.
+          final sanitized = Map<String, dynamic>.from(firstQuestion)
+            ..remove('answer');
           await sendGameMessage(
             originId,
             GameMessage(
@@ -532,7 +536,7 @@ class AppController {
               gameType: GameType.trivia,
               type: GameMessageType.question,
               payload: {
-                'question': firstQuestion,
+                'question': sanitized,
                 'index': 0,
               },
             ),

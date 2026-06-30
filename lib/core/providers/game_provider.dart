@@ -355,28 +355,38 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState?> {
   // ---------------------------------------------------------------------------
 
   /// Both players call this when they tap an answer or the timer fires.
-  /// Returns the answer index so the caller can send the packet (opponent only).
-  int? submitAnswer(int answerIndex) {
-    if (state == null || state!.phase != TriviaPhase.answering) return null;
-    if (state!.myAnswerIndex != null) return null; // already answered
+  ///
+  /// - Opponent: returns [answerIndexToSend] — caller sends an 'answer' packet.
+  /// - Host: if the opponent's answer had already arrived (the host-answers-
+  ///   second race), scoring completes immediately and [resultToSend] carries
+  ///   the payload the caller must send as a 'result' packet — otherwise the
+  ///   opponent's screen hangs in "waiting for result" forever, since nothing
+  ///   else would ever notify them.
+  ({int? answerIndexToSend, Map<String, dynamic>? resultToSend}) submitAnswer(
+      int answerIndex) {
+    if (state == null || state!.phase != TriviaPhase.answering) {
+      return (answerIndexToSend: null, resultToSend: null);
+    }
+    if (state!.myAnswerIndex != null) {
+      return (answerIndexToSend: null, resultToSend: null); // already answered
+    }
 
     if (state!.isHost) {
-      // Host records locally; waits for opponent answer
-      final updated = state!.copyWith(
+      // Host records locally; waits for opponent answer.
+      state = state!.copyWith(
         myAnswerIndex: answerIndex,
         phase: TriviaPhase.waitingForOpponent,
       );
-      state = updated;
-      // Check if opponent already answered before us (race-condition handling)
-      _tryScore();
-      return null; // host doesn't send a packet
+      // Opponent may have already answered before us — score immediately if so.
+      final result = _tryScore();
+      return (answerIndexToSend: null, resultToSend: result);
     } else {
-      // Opponent records locally and signals caller to send packet
+      // Opponent records locally and signals caller to send packet.
       state = state!.copyWith(
         myAnswerIndex: answerIndex,
         phase: TriviaPhase.waitingForResult,
       );
-      return answerIndex; // caller sends answer packet
+      return (answerIndexToSend: answerIndex, resultToSend: null);
     }
   }
 
@@ -472,9 +482,10 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState?> {
     );
   }
 
-  /// Timer expired — auto-submit -1 (timed out).
-  /// Returns answer index for caller (opponent returns -1 to send; host returns null).
-  int? onTimerExpired() {
+  /// Timer expired — auto-submit -1 (timed out). Same return contract as
+  /// [submitAnswer], which this delegates to.
+  ({int? answerIndexToSend, Map<String, dynamic>? resultToSend})
+      onTimerExpired() {
     return submitAnswer(-1);
   }
 
