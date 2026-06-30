@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -28,6 +30,8 @@ class _HomeShellState extends ConsumerState<HomeShell>
     '/profile',
   ];
 
+  StreamSubscription<BluetoothAdapterState>? _adapterStateSub;
+
   @override
   void initState() {
     super.initState();
@@ -39,7 +43,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
 
       final localProfile = ref.read(localProfileProvider);
       if (localProfile != null) {
-        FlutterBluePlus.adapterState.listen((state) {
+        _adapterStateSub = FlutterBluePlus.adapterState.listen((state) {
           if (state == BluetoothAdapterState.off) {
             try {
               FlutterBluePlus.turnOn();
@@ -76,6 +80,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _adapterStateSub?.cancel();
     super.dispose();
   }
 

@@ -443,8 +443,14 @@ class AppController {
 
     switch (gm.type) {
       case GameMessageType.invite:
-        // If already in a game, auto-decline (busy).
-        if (_ref.read(ticTacToeProvider) != null) {
+        // Auto-decline (busy) only if a game is genuinely in progress — a
+        // finished game (winner set) or one whose opponent disconnected must
+        // not block a new invite (including a "Play Again" from the same
+        // peer), or rematches/new challenges get silently declined forever.
+        final tttState = _ref.read(ticTacToeProvider);
+        if (tttState != null &&
+            tttState.winner == null &&
+            !tttState.opponentDisconnected) {
           await sendGameMessage(
             originId,
             GameMessage(
@@ -492,8 +498,10 @@ class AppController {
 
     switch (gm.type) {
       case GameMessageType.invite:
-        // If already in a trivia game, auto-decline.
-        if (_ref.read(triviaGameProvider) != null) {
+        // Auto-decline (busy) only if a trivia game is genuinely in progress
+        // — a finished game must not block a new invite/rematch.
+        final triviaState = _ref.read(triviaGameProvider);
+        if (triviaState != null && triviaState.phase != TriviaPhase.finished) {
           await sendGameMessage(
             originId,
             GameMessage(
